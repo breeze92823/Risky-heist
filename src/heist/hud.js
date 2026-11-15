@@ -13,6 +13,17 @@ const ICON = {
   guide: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><circle cx="12" cy="17.5" r=".6"/></svg>',
   zzz: '<svg viewBox="0 0 24 24"><path d="M4 6h7l-7 8h7M13 3h6l-6 6h6M14 15h4l-4 5h4"/></svg>',
   gift: '<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="12" rx="1.5"/><path d="M3 13h18M12 9v12M12 9C9 9 7 7.5 7.8 5.6 8.7 3.5 11 5 12 9zM12 9c3 0 5-1.5 4.2-3.4C15.3 3.5 13 5 12 9z"/></svg>',
+  rebirth: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-13.7 5.6"/><path d="M4 12A8 8 0 0 1 17.7 6.4"/><path d="M17.5 2.5v4h-4M6.5 21.5v-4h4"/></svg>',
+}
+// Big colourful icons for the window title tabs (self-coloured, not stroke-tinted).
+const TAB_ICON = {
+  rebirth: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#fff" stroke="#14081f" stroke-width="4"/><path d="M5 32a27 27 0 0 1 54 0z" fill="#ff2f6d" stroke="#14081f" stroke-width="4"/><path d="M44 22a14 14 0 1 0 3 15" fill="none" stroke="#14081f" stroke-width="7" stroke-linecap="round"/><path d="M44 22a14 14 0 1 0 3 15" fill="none" stroke="#7fd8ff" stroke-width="3.5" stroke-linecap="round"/><path d="M38 14l9 7-10 4z" fill="#7fd8ff" stroke="#14081f" stroke-width="2.5" stroke-linejoin="round"/></svg>',
+  gift: '<svg viewBox="0 0 64 64"><rect x="6" y="12" width="52" height="46" rx="8" fill="#fff" stroke="#14081f" stroke-width="4"/><path d="M6 20a8 8 0 0 1 8-8h36a8 8 0 0 1 8 8v8H6z" fill="#ff3b5c" stroke="#14081f" stroke-width="4"/><rect x="17" y="4" width="7" height="15" rx="3.5" fill="#cfd4e0" stroke="#14081f" stroke-width="3"/><rect x="40" y="4" width="7" height="15" rx="3.5" fill="#cfd4e0" stroke="#14081f" stroke-width="3"/><text x="32" y="51" text-anchor="middle" font-family="Fredoka, Arial Black" font-weight="700" font-size="23" fill="#14081f">31</text></svg>',
+  upgrades: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#33d6ff" stroke="#14081f" stroke-width="4"/><path d="M32 14 48 32H38v16H26V32H16z" fill="#fff" stroke="#14081f" stroke-width="4" stroke-linejoin="round"/></svg>',
+  tools: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#c56bff" stroke="#14081f" stroke-width="4"/><path d="M22 48 40 30" stroke="#14081f" stroke-width="11" stroke-linecap="round"/><path d="M22 48 40 30" stroke="#d9a35a" stroke-width="5" stroke-linecap="round"/><path d="M30 18l10-4 12 12-4 10-6-6-6 2-4-4 2-6z" fill="#dfe4ee" stroke="#14081f" stroke-width="3.5" stroke-linejoin="round"/></svg>',
+  sell: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#4ddc2a" stroke="#14081f" stroke-width="4"/><text x="32" y="46" text-anchor="middle" font-family="Fredoka, Arial Black" font-weight="700" font-size="40" fill="#fff" stroke="#14081f" stroke-width="3" paint-order="stroke">$</text></svg>',
+  index: '<svg viewBox="0 0 64 64"><path d="M10 14a6 6 0 0 1 6-6h38v44H16a6 6 0 0 0-6 6z" fill="#2f8cff" stroke="#14081f" stroke-width="4" stroke-linejoin="round"/><path d="M10 58a6 6 0 0 1 6-6h38v6z" fill="#fff" stroke="#14081f" stroke-width="4" stroke-linejoin="round"/><path d="M22 20h22M22 28h16" stroke="#cfe6ff" stroke-width="4" stroke-linecap="round"/></svg>',
+  guide: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#ff9a1f" stroke="#14081f" stroke-width="4"/><text x="32" y="45" text-anchor="middle" font-family="Fredoka, Arial Black" font-weight="700" font-size="36" fill="#fff" stroke="#14081f" stroke-width="3" paint-order="stroke">?</text></svg>',
 }
 
 function h(tag, cls, html = '') {
@@ -52,8 +63,12 @@ export function createHud(actions) {
 
   // --- Left column ------------------------------------------------------------------------
   const left = h('div', 'hud-left')
+  const rebirthBtn = button('side rebirth', `<span class="ico">${ICON.rebirth}</span><span class="badge"></span><span class="lbl">Rebirth</span>`, actions.onRebirth)
+  const giftBtn = button('side gifts', `<span class="ico cal">${TAB_ICON.gift}</span><span class="bang hidden">!</span><span class="lbl">Gifts</span>`, actions.onGifts)
   left.append(
     button('side index', `<span class="ico">${ICON.index}</span><span class="lbl">Index</span>`, actions.onIndex),
+    rebirthBtn,
+    giftBtn,
     button('side guide', `<span class="ico">${ICON.guide}</span><span class="lbl">Guide</span>`, actions.onGuide),
   )
   root.appendChild(left)
@@ -95,21 +110,26 @@ export function createHud(actions) {
   // --- Panel ------------------------------------------------------------------------------------
   const shade = h('div', 'panel-shade hidden')
   const panel = h('div', 'panel')
-  const panelHead = h('div', 'panel-head', '<div class="panel-title"></div>')
-  const closeBtn = button('panel-close', '✕', () => closePanel())
-  panelHead.appendChild(closeBtn)
+  const panelTab = h('div', 'panel-tab', '<div class="panel-icon"></div><div class="panel-title"></div>')
+  const closeBtn = button('panel-close', 'X', () => closePanel())
   const panelBody = h('div', 'panel-body')
-  panel.append(panelHead, panelBody)
-  shade.appendChild(panel)
+  panel.append(panelTab, closeBtn, panelBody)
+  const panelFoot = h('div', 'panel-foot hidden')
+  const panelWrap = h('div', 'panel-wrap')
+  panelWrap.append(panel, panelFoot)
+  shade.appendChild(panelWrap)
   shade.addEventListener('pointerdown', (e) => {
     if (e.target === shade) closePanel()
   })
   document.body.appendChild(shade)
   let panelOpen = false
   let onClose = null
-  function openPanel({ title, color = '#2f8cff', body, onClosed }) {
+  function openPanel({ title, color = '#ff2f6d', icon = 'guide', body, onClosed, wide = false }) {
     panel.style.setProperty('--accent', color)
-    panelHead.querySelector('.panel-title').textContent = title
+    panel.classList.toggle('wide', wide)
+    panelTab.querySelector('.panel-title').textContent = title
+    panelTab.querySelector('.panel-icon').innerHTML = TAB_ICON[icon] ?? ''
+    panelFoot.classList.add('hidden')
     panelBody.replaceChildren(body)
     shade.classList.remove('hidden')
     panelOpen = true
@@ -134,10 +154,31 @@ export function createHud(actions) {
   let lastMoney = -1
   let lastJail = -1
   let lastHot = ''
+  let lastRebirth = ''
   return {
     get panelOpen() {
       return panelOpen
     },
+    setFoot(text) {
+      panelFoot.classList.toggle('hidden', !text)
+      if (text) panelFoot.textContent = text
+    },
+    // Rebirth button badge: progress toward the next rebirth (green %, READY when affordable).
+    setRebirth(mult, progress) {
+      const k = progress >= 1 ? 'READY' : `${Math.floor(Math.max(0, progress) * 100)}%`
+      const key = k + mult
+      if (key === lastRebirth) return
+      lastRebirth = key
+      rebirthBtn.querySelector('.badge').textContent = k
+      rebirthBtn.classList.toggle('ready', progress >= 1)
+      rebirthBtn.querySelector('.lbl').textContent = mult > 1 ? `Rebirth x${+mult.toFixed(1)}` : 'Rebirth'
+    },
+    setGiftReady(on) {
+      giftBtn.querySelector('.bang').classList.toggle('hidden', !on)
+      giftBtn.classList.toggle('ready', on)
+    },
+    rebirthView,
+    dailyView,
     openPanel,
     closePanel,
     row,
@@ -253,4 +294,89 @@ function row({ thumb, name, nameColor = '#ffffff', lines = [], button: btn }) {
     r.appendChild(b)
   }
   return r
+}
+
+const cashIcon = () => h('span', 'cash-ico big')
+
+// The Rebirth window body: current -> next multiplier pills, warning, progress bar, button.
+function rebirthView() {
+  const el = h('div', 'rb')
+  const from = h('div', 'rb-pill')
+  const to = h('div', 'rb-pill next')
+  const arrow = h('div', 'rb-arrow', '<svg viewBox="0 0 40 30"><path d="M3 10h20V3l14 12-14 12v-7H3z" fill="#fff" stroke="#14081f" stroke-width="3" stroke-linejoin="round"/></svg>')
+  const mults = h('div', 'rb-mults')
+  mults.append(from, arrow, to)
+  const warn = h('div', 'rb-warn', 'Rebirth resets your Cash!')
+  const bar = h('div', 'rb-bar')
+  const fill = h('div', 'rb-fill')
+  const txt = h('div', 'rb-text')
+  bar.append(fill, txt)
+  const barRow = h('div', 'rb-barrow')
+  barRow.append(cashIcon(), bar)
+  const go = button('big-green', 'Rebirth', () => view.onRebirth?.())
+  const note = h('div', 'rb-note', '')
+  el.append(mults, warn, barRow, go, note)
+  const pill = (p, m) => {
+    p.replaceChildren(cashIcon(), h('span', 'rb-x', `${+m.toFixed(1)}X`))
+  }
+  const view = {
+    el,
+    onRebirth: null,
+    set({ from: a, to: b, money: m, cost, rebirths }) {
+      pill(from, a)
+      pill(to, b)
+      fill.style.width = `${Math.min(1, m / cost) * 100}%`
+      txt.textContent = `${money(m)}/${money(cost)}`
+      go.classList.toggle('off', m < cost)
+      note.textContent = `Rebirths: ${rebirths} - multiplies base income and sale prices. Your items, slots and tools stay.`
+    },
+  }
+  return view
+}
+
+// The Daily Gifts window body: days 1-6 in a 3x2 grid, day 7 as a big card, Claim All.
+// cells: [{ day, title, titleColor, thumb (null = cash), state: 'claim' | 'claimed' | 'locked' }]
+function dailyView() {
+  const el = h('div', 'dg')
+  const grid = h('div', 'dg-grid')
+  const big = h('div', 'dg-side')
+  el.append(grid, big)
+  const view = {
+    el,
+    onClaim: null,
+    onClaimAll: null,
+    set(cells, allPrice) {
+      grid.replaceChildren()
+      big.replaceChildren()
+      cells.forEach((c, i) => {
+        const card = h('div', `dg-card ${c.state}${i === 6 ? ' seven' : ''}`)
+        card.append(h('div', 'dg-day', `Day ${c.day}`))
+        const art = h('div', 'dg-art')
+        if (c.thumb) {
+          const img = h('img')
+          img.src = c.thumb
+          art.appendChild(img)
+        } else art.appendChild(h('span', 'cash-stack'))
+        card.append(art)
+        const t = h('div', 'dg-title')
+        t.textContent = c.title
+        t.style.color = c.titleColor
+        card.append(t, h('div', 'dg-state', c.state === 'claim' ? 'CLAIM' : c.state === 'claimed' ? 'CLAIMED' : ''))
+        if (c.state === 'claim') {
+          card.addEventListener('pointerdown', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            view.onClaim?.(i)
+          })
+        }
+        if (i < 6) grid.appendChild(card)
+        else big.appendChild(card)
+      })
+      big.append(h('div', 'dg-all', 'Claim All!'))
+      const b = button('big-green dg-buy', allPrice == null ? 'All claimed' : `<span class="cash-ico"></span>${money(allPrice)}`, () => view.onClaimAll?.())
+      if (allPrice == null) b.classList.add('off')
+      big.append(b)
+    },
+  }
+  return view
 }
