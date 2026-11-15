@@ -374,6 +374,9 @@ export const TREASURES = [
   { id: 'fossil', name: 'Dino Fossil', rarity: 'secret', value: 48000000, luck: 77, income: 785000 },
   { id: 'robot', name: 'Robot Head', rarity: 'secret', value: 55000000, luck: 80, income: 900000 },
   { id: 'car', name: 'Gold Racer', rarity: 'secret', value: 60000000, luck: 82, income: 960000 },
+  // Daily Gift exclusives (exclusive: never rolled in the tower)
+  { id: 'trophy', name: 'Golden Trophy', rarity: 'legendary', value: 1800000, luck: 88, income: 30000, exclusive: true },
+  { id: 'barrel', name: 'Nuclear Barrel', rarity: 'secret', value: 80000000, luck: 95, income: 1250000, exclusive: true },
 ]
 
 // Floors, ground first. weights = chance per rarity (RARITIES order) before luck;
@@ -428,4 +431,25 @@ export const TIMED_SPAWNS = [
   { rarity: 'mythic', label: 'Mythic spawns in', seconds: 14 * 60, color: '#ff3d6e', minFloor: 3 },
   { rarity: 'secret', label: 'Secret spawns in', seconds: 22 * 60, color: '#ffffff', minFloor: 4 },
 ]
+// Rebirth: trade ALL your cash (once you have at least the cost) for a permanent cash
+// multiplier on base income and sales. multiplier = 1 + step * rebirths;
+// cost = baseCost * costGrowth ^ rebirths. Items, slots, tools and upgrades are kept.
+export const REBIRTH = { baseCost: 500000, costGrowth: 3, step: 0.5 }
+// Daily Gifts: a new day unlocks every `dayHours` of play-time calendar (checked while
+// playing and on load); claim each unlocked day once. After day 7 is claimed the cycle
+// restarts. "Claim All" (premium currency in the reference) is CASH here: the unclaimed
+// rewards' total worth x allMarkup (slightly high), scaled by the cash rewards too.
+export const DAILY = {
+  dayHours: 24,
+  allMarkup: 1.15,
+  rewards: [
+    { cash: 10000 },
+    { item: 'trophy' },
+    { cash: 250000 },
+    { item: 'scepter' },
+    { cash: 5000000 },
+    { item: 'robot' },
+    { item: 'barrel' },
+  ],
+}
 export const SAVE_KEY = 'risky-heist-save-v1'

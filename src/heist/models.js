@@ -21,6 +21,7 @@ import {
   OctahedronGeometry,
   PerspectiveCamera,
   PMREMGenerator,
+  RepeatWrapping,
   PlaneGeometry,
   Scene,
   SphereGeometry,
@@ -42,6 +43,7 @@ const M = {}
 const mat = (key, make) => (M[key] ??= make())
 const gold = () => mat('gold', () => new MeshStandardMaterial({ color: '#ffc531', metalness: 1, roughness: 0.22, emissive: '#5a3a00', emissiveIntensity: 0.25 }))
 const darkGold = () => mat('dgold', () => new MeshStandardMaterial({ color: '#d99a12', metalness: 1, roughness: 0.32 }))
+const metal = () => mat('metal', () => new MeshStandardMaterial({ color: '#8a8f99', metalness: 1, roughness: 0.3 }))
 const silver = () => mat('silver', () => new MeshStandardMaterial({ color: '#e3e8f0', metalness: 1, roughness: 0.18 }))
 const iron = () => mat('iron', () => new MeshStandardMaterial({ color: '#9aa1ad', metalness: 0.85, roughness: 0.38 }))
 const black = () => mat('black', () => new MeshStandardMaterial({ color: '#1d1f26', roughness: 0.5, metalness: 0.2 }))
@@ -462,6 +464,55 @@ const BUILD = {
     add(g, cyl(0.02, 0.02, 0.36, 8), shell, 0.2, 1.12, 0)
     add(g, sph(0.06, 12, 10), glow('#ff2d4f', 3), 0.2, 1.32, 0)
     add(g, B(0.5, 0.2, 0.5), iron(), 0, 0.1, 0)
+    return g
+  },
+  trophy() {
+    const g = new Group()
+    const pts = [[0, 0.62], [0.12, 0.62], [0.2, 0.66], [0.36, 0.86], [0.44, 1.12], [0.46, 1.3], [0.43, 1.31], [0.38, 1.12], [0.0, 0.98]].map(([x, y]) => new Vector2(x, y))
+    add(g, new LatheGeometry(pts, 32), gold())
+    add(g, cyl(0.07, 0.1, 0.34, 16), gold(), 0, 0.46, 0)
+    add(g, tor(0.12, 0.04, 8, 20), darkGold(), 0, 0.6, 0, Math.PI / 2)
+    for (const sx of [-1, 1]) add(g, tor(0.2, 0.045, 8, 20, Math.PI), gold(), sx * 0.44, 1.05, 0, 0, 0, sx * -Math.PI / 2)
+    add(g, B(0.62, 0.14, 0.62), plain('#5a2e14', 0.5), 0, 0.07, 0)
+    add(g, B(0.5, 0.18, 0.5), plain('#7a3d1c', 0.5), 0, 0.23, 0)
+    add(g, B(0.3, 0.08, 0.02), gold(), 0, 0.23, 0.26)
+    add(g, new OctahedronGeometry(0.09, 0), gem('#ff2d55', 0.7), 0, 1.0, 0.39)
+    return g
+  },
+  barrel() {
+    const g = new Group()
+    const label = canvasMat('radiation', 256, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#c6ff1a'
+      ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#111'
+      const cx = w / 2
+      const cy = h / 2
+      for (let k = 0; k < 3; k++) {
+        const a = (k / 3) * Math.PI * 2 - Math.PI / 2
+        ctx.beginPath()
+        ctx.moveTo(cx, cy)
+        ctx.arc(cx, cy, 52, a - 0.5, a + 0.5)
+        ctx.closePath()
+        ctx.fill()
+      }
+      ctx.fillStyle = '#c6ff1a'
+      ctx.beginPath()
+      ctx.arc(cx, cy, 14, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#111'
+      ctx.beginPath()
+      ctx.arc(cx, cy, 9, 0, Math.PI * 2)
+      ctx.fill()
+    }, { emissive: '#7dff00', emissiveIntensity: 0.35, roughness: 0.45 })
+    if (label.map) {
+      label.emissiveMap = label.map
+      label.map.repeat.set(2, 1)
+      label.map.wrapS = RepeatWrapping
+    }
+    const lime = mat('lime', () => new MeshStandardMaterial({ color: '#c6ff1a', emissive: '#6dff00', emissiveIntensity: 0.4, roughness: 0.45 }))
+    add(g, cyl(0.42, 0.42, 1.1, 32), [label, lime, lime], 0, 0.6, 0)
+    for (const y of [0.1, 0.42, 0.78, 1.1]) add(g, tor(0.425, 0.035, 8, 40), lime, 0, y, 0, Math.PI / 2)
+    add(g, cyl(0.08, 0.08, 0.05, 16), metal(), 0.2, 1.17, 0.1)
     return g
   },
   car() {

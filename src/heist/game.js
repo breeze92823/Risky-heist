@@ -7,7 +7,7 @@
 // pad and adds its Luck to every future roll. Police heat ("Jail Chance") builds while
 // on the heist bank; at 100% you are busted and lose what you carry.
 import { CatmullRomCurve3, Group, Mesh, MeshStandardMaterial, Quaternion, TubeGeometry, Vector3 } from 'three'
-import { BASE, BOOSTS, BUILDING, FLOORS, HIT_INTERVAL, JAIL, LAYOUT, LUCK_POWER, RARITIES, SAVE_KEY, SPAWN, STALLS, TIMED_SPAWNS, TOOLS, TREASURES, UPGRADES, ZIPLINE } from '../config.js'
+import { BASE, BOOSTS, BUILDING, DAILY, FLOORS, HIT_INTERVAL, JAIL, LAYOUT, LUCK_POWER, RARITIES, REBIRTH, SAVE_KEY, SPAWN, STALLS, TIMED_SPAWNS, TOOLS, TREASURES, UPGRADES, ZIPLINE } from '../config.js'
 import { player, onRespawn, resetPlayer, setDriver, isDriven } from '../player.js'
 import { syncYawToPlayer } from '../camera.js'
 import { BONE_INDEX } from '../avatar/rig.js'
@@ -23,7 +23,7 @@ import { boxGeo as boxGeoLocal, fmt, metal, money } from './kit.js'
 
 const RARITY = Object.fromEntries(RARITIES.map((r, i) => [r.id, { ...r, tier: i }]))
 const TREASURE = Object.fromEntries(TREASURES.map((t) => [t.id, t]))
-const BY_RARITY = Object.fromEntries(RARITIES.map((r) => [r.id, TREASURES.filter((t) => t.rarity === r.id)]))
+const BY_RARITY = Object.fromEntries(RARITIES.map((r) => [r.id, TREASURES.filter((t) => t.rarity === r.id && !t.exclusive)]))
 const SLOT_COUNT = BASE.slotsPerSide * 2
 const pick = (arr) => arr[(Math.random() * arr.length) | 0]
 
@@ -39,12 +39,16 @@ function freshState() {
     slots: Array.from({ length: SLOT_COUNT }, () => ({ id: null, stored: 0 })),
     carried: [],
     discovered: [],
+    rebirths: 0,
+    daily: { day: 1, claimed: Array(7).fill(false), nextAt: now + DAILY.dayHours * 3600000 },
     stats: { stolen: 0, heists: 0, earned: 0, busts: 0, bestId: null, maxFloor: 1 },
     spawns: Object.fromEntries(TIMED_SPAWNS.map((s) => [s.rarity, now + s.seconds * 1000])),
     pending: {},
     lastSeen: now,
   }
 }
+const cashMult = (rebirths) => 1 + REBIRTH.step * rebirths
+const rebirthCost = (rebirths) => Math.round(REBIRTH.baseCost * Math.pow(REBIRTH.costGrowth, rebirths))
 function loadState() {
   const s = freshState()
   try {
@@ -57,8 +61,15 @@ function loadState() {
       s.carried = (d.carried ?? []).filter((id) => TREASURE[id])
       // collectors keep filling while the game was closed (capped)
       const away = Math.min(BASE.offlineCapSeconds, Math.max(0, (Date.now() - (d.lastSeen ?? Date.now())) / 1000))
+      s.rebirths = Math.max(0, Math.floor(Number(d.rebirths) || 0))
+      const dd = d.daily ?? {}
+      s.daily = {
+        day: Math.min(7, Math.max(1, Math.floor(Number(dd.day) || 1))),
+        claimed: Array.from({ length: 7 }, (_, i) => !!dd.claimed?.[i]),
+        nextAt: Number(dd.nextAt) || Date.now() + DAILY.dayHours * 3600000,
+      }
       s.slots.forEach((sl, i) => {
-        if (sl.id && i < s.unlocked) sl.stored += TREASURE[sl.id].income * away
+        if (sl.id && i < s.unlocked) sl.stored += TREASURE[sl.id].income * cashMult(s.rebirths) * away
       })
       s.awaySeconds = away
     }
@@ -85,6 +96,7 @@ export function createGame({ scene, camera, renderer, preset }) {
   const totalLuck = () => placed().reduce((a, s) => a + TREASURE[s.id].luck, 0)
   const totalIncome = () => placed().reduce((a, s) => a + TREASURE[s.id].income, 0)
   const tool = () => TOOLS[state.tool]
+  const mult = () => cashMult(state.rebirths)
   const stopPrice = () => Math.round(Math.max(BOOSTS.stopPolice.base, totalIncome() * BOOSTS.stopPolice.incomeSeconds))
   const randPrice = () => Math.round(Math.max(BOOSTS.randomTreasure.base, totalIncome() * BOOSTS.randomTreasure.incomeSeconds))
   const baseCost = () => {
@@ -131,6 +143,8 @@ export function createGame({ scene, camera, renderer, preset }) {
     onRandomTreasure: buyRandom,
     onIndex: openIndex,
     onGuide: openGuide,
+    onRebirth: openRebirth,
+    onGifts: openDaily,
   })
   function refreshCarry() {
     hud.setCarry(
@@ -145,9 +159,10 @@ export function createGame({ scene, camera, renderer, preset }) {
       base.setStored(i, s.stored)
     })
     base.setUnlocked(state.unlocked)
-    base.setStats(totalLuck(), totalIncome())
+    base.setStats(totalLuck(), totalIncome() * mult())
     base.setUpgrade(state.unlocked, SLOT_COUNT, baseCost())
-    hud.setIncome(totalIncome())
+    hud.setIncome(totalIncome() * mult())
+    hud.setRebirth(mult(), state.money / rebirthCost(state.rebirths))
   }
 
   function canAfford(cost) {
@@ -159,11 +174,13 @@ export function createGame({ scene, camera, renderer, preset }) {
   function spend(cost) {
     state.money -= cost
     hud.setMoney(state.money)
+    hud.setRebirth(mult(), state.money / rebirthCost(state.rebirths))
   }
   function earn(amount, at) {
     state.money += amount
     state.stats.earned += amount
     hud.setMoney(state.money)
+    hud.setRebirth(mult(), state.money / rebirthCost(state.rebirths))
     if (at) fx.floatText(at, `+${money(amount)}`, { color: '#6dff3a', size: amount > 1e6 ? 1.5 : 1.2 })
   }
 
@@ -593,6 +610,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     const bc = baseCost()
     hud.openPanel({
       title: 'Upgrades',
+      icon: 'upgrades',
       color: STALLS.upgrades.ring,
       onClosed: () => (interactions.blocked = false),
       body: frag([
@@ -607,6 +625,7 @@ export function createGame({ scene, camera, renderer, preset }) {
   function openTools() {
     hud.openPanel({
       title: 'Tools',
+      icon: 'tools',
       color: STALLS.tools.ring,
       onClosed: () => (interactions.blocked = false),
       body: frag([
@@ -648,10 +667,10 @@ export function createGame({ scene, camera, renderer, preset }) {
     if (!state.carried.length) rows.push(div('panel-note', 'Nothing in your hands.'))
     state.carried.forEach((id, k) => {
       const t = TREASURE[id]
-      rows.push(hud.row({ thumb: thumb(id), name: t.name, nameColor: RARITY[t.rarity].tier === 6 ? '#ffffff' : RARITY[t.rarity].color, lines: [{ text: RARITY[t.rarity].name, color: '#cfc8ff' }], button: { label: `Sell ${money(t.value)}`, onClick: () => sellCarried(k) } }))
+      rows.push(hud.row({ thumb: thumb(id), name: t.name, nameColor: RARITY[t.rarity].tier === 6 ? '#ffffff' : RARITY[t.rarity].color, lines: [{ text: RARITY[t.rarity].name, color: '#cfc8ff' }], button: { label: `Sell ${money(t.value * mult())}`, onClick: () => sellCarried(k) } }))
     })
     if (state.carried.length > 1) {
-      const all = state.carried.reduce((a, id) => a + TREASURE[id].value, 0)
+      const all = state.carried.reduce((a, id) => a + TREASURE[id].value, 0) * mult()
       rows.push(hud.row({ name: 'Sell all carried', nameColor: '#8dff5a', button: { label: money(all), onClick: () => sellCarried(-1) } }))
     }
     rows.push(div('panel-section', 'On your base'))
@@ -659,14 +678,14 @@ export function createGame({ scene, camera, renderer, preset }) {
     if (!onBase.length) rows.push(div('panel-note', 'Your base is empty.'))
     for (const [s, i] of onBase) {
       const t = TREASURE[s.id]
-      rows.push(hud.row({ thumb: thumb(s.id), name: t.name, nameColor: RARITY[t.rarity].tier === 6 ? '#ffffff' : RARITY[t.rarity].color, lines: [{ text: `${money(t.income)}/s - +${t.luck}% luck`, color: '#c9ff9e' }], button: { label: `Sell ${money(t.value)}`, color: '#ff8a1f', onClick: () => sellSlot(i) } }))
+      rows.push(hud.row({ thumb: thumb(s.id), name: t.name, nameColor: RARITY[t.rarity].tier === 6 ? '#ffffff' : RARITY[t.rarity].color, lines: [{ text: `${money(t.income * mult())}/s - +${t.luck}% luck`, color: '#c9ff9e' }], button: { label: `Sell ${money(t.value * mult())}`, color: '#ff8a1f', onClick: () => sellSlot(i) } }))
     }
-    hud.openPanel({ title: 'Sell', color: '#6dff3a', onClosed: () => (interactions.blocked = false), body: frag(rows) })
+    hud.openPanel({ title: 'Sell', icon: 'sell', color: '#3fd92a', onClosed: () => (interactions.blocked = false), body: frag(rows) })
     interactions.blocked = true
   }
   function sellCarried(k) {
     const ids = k < 0 ? state.carried.splice(0) : state.carried.splice(k, 1)
-    const total = ids.reduce((a, id) => a + TREASURE[id].value, 0)
+    const total = ids.reduce((a, id) => a + TREASURE[id].value, 0) * mult()
     earn(total, new Vector3(player.position.x, player.position.y + 2.4, player.position.z))
     sfx.cash()
     refreshCarry()
@@ -677,7 +696,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     collectSlot(i)
     const id = state.slots[i].id
     state.slots[i].id = null
-    earn(TREASURE[id].value, new Vector3(player.position.x, player.position.y + 2.4, player.position.z))
+    earn(TREASURE[id].value * mult(), new Vector3(player.position.x, player.position.y + 2.4, player.position.z))
     sfx.cash()
     refreshBase()
     save()
@@ -695,7 +714,7 @@ export function createGame({ scene, camera, renderer, preset }) {
       card.append(img, div('n', known ? t.name : '???'), div('r', r.name), div('s', known ? `${money(t.income)}/s` : ''))
       grid.appendChild(card)
     }
-    hud.openPanel({ title: `Index ${state.discovered.length}/${TREASURES.length}`, color: '#4aa8ff', onClosed: () => (interactions.blocked = false), body: frag([div('panel-note', 'Every treasure you steal is recorded here.'), grid]) })
+    hud.openPanel({ title: `Index ${state.discovered.length}/${TREASURES.length}`, icon: 'index', color: '#2f8cff', onClosed: () => (interactions.blocked = false), body: frag([div('panel-note', 'Every treasure you steal is recorded here.'), grid]) })
     interactions.blocked = true
   }
   function openGuide() {
@@ -706,8 +725,179 @@ export function createGame({ scene, camera, renderer, preset }) {
       ['4. Escape', 'Smash the glass exit on your floor and zipline home from the balcony. Watch the Jail Chance - at 100% you get busted and lose your loot.'],
       ['5. Get rich', 'Place loot on your base slots. Each one earns cash per second (walk over the green pad to collect) and adds Luck to every future roll.'],
     ]
-    hud.openPanel({ title: 'How to Heist', color: '#ffb84a', onClosed: () => (interactions.blocked = false), body: frag(steps.map(([a, b]) => hud.row({ name: a, nameColor: '#ffe14d', lines: [{ text: b }] }))) })
+    hud.openPanel({ title: 'How to Heist', icon: 'guide', color: '#ff9a1f', onClosed: () => (interactions.blocked = false), body: frag(steps.map(([a, b]) => hud.row({ name: a, nameColor: '#ffe14d', lines: [{ text: b }] }))) })
     interactions.blocked = true
+  }
+
+  // --- Rebirth ---------------------------------------------------------------------------------------
+  let panelTick = null // live refresh for the open panel (the rebirth progress bar)
+  function openRebirth() {
+    const view = hud.rebirthView()
+    const paint = () => {
+      const cost = rebirthCost(state.rebirths)
+      view.set({ from: mult(), to: cashMult(state.rebirths + 1), money: state.money, cost, rebirths: state.rebirths })
+    }
+    view.onRebirth = doRebirth
+    paint()
+    panelTick = paint
+    hud.openPanel({
+      title: 'Rebirth',
+      icon: 'rebirth',
+      color: '#ff2f6d',
+      onClosed: () => {
+        interactions.blocked = false
+        panelTick = null
+      },
+      body: view.el,
+    })
+    interactions.blocked = true
+  }
+  function doRebirth() {
+    const cost = rebirthCost(state.rebirths)
+    if (state.money < cost) {
+      hud.toast(`Need ${money(cost - state.money)} more to rebirth!`, '#ff6a6a')
+      sfx.deny()
+      return
+    }
+    state.money = 0
+    state.rebirths++
+    hud.setMoney(0)
+    hud.closePanel()
+    refreshBase()
+    const p = new Vector3(player.position.x, player.position.y + 1.5, player.position.z)
+    fx.flash('#ffffff', 0.7)
+    fx.shake(0.6)
+    fx.ring(new Vector3(p.x, player.position.y + 0.1, p.z), '#ff2f6d', 7, 0.9)
+    fx.ring(new Vector3(p.x, player.position.y + 0.1, p.z), '#6dff3a', 5, 0.7)
+    fx.burst(p, { count: 120, color: ['#ff2f6d', '#ffffff', '#6dff3a', '#ffd21f'], speed: 10, up: 6, size: 0.6, life: 1.4 })
+    fx.chunks(p, { count: 24, color: ['#5bdc4a', '#3cae32', '#ffd21f'], size: [0.25, 0.45], flat: 0.05, speed: 6, up: 7, life: 2, floor: player.position.y })
+    hud.banner('REBIRTH!', `Cash x${fmt(mult(), 1)} forever`, '#ff4f8a')
+    sfx.buy()
+    sfx.floor()
+    save()
+  }
+
+  // --- Daily Gifts -------------------------------------------------------------------------------------
+  const DAY_MS = DAILY.dayHours * 3600000
+  const rewardWorth = (r) => r.cash ?? TREASURE[r.item].value
+  function dailyTick() {
+    const d = state.daily
+    const now = Date.now()
+    if (d.claimed.every(Boolean)) {
+      // a finished week starts over on the next play day
+      if (now >= d.nextAt) {
+        d.day = 1
+        d.claimed = Array(7).fill(false)
+        d.nextAt = now + DAY_MS
+        hud.toast('A new week of Daily Gifts is ready!', '#ffd21f')
+      }
+    } else if (now >= d.nextAt && d.day < 7) {
+      d.day++
+      d.nextAt = now + DAY_MS
+      hud.toast(`Daily Gift day ${d.day} unlocked!`, '#ffd21f')
+    }
+    hud.setGiftReady(d.claimed.some((c, i) => !c && i < d.day))
+  }
+  const freeRoom = () => state.carryCap - state.carried.length + state.slots.filter((sl, k) => k < state.unlocked && !sl.id).length
+  function giveItem(id) {
+    if (!state.discovered.includes(id)) state.discovered.push(id)
+    if (state.carried.length < state.carryCap) state.carried.push(id)
+    else state.slots[state.slots.findIndex((sl, k) => k < state.unlocked && !sl.id)].id = id
+  }
+  function grant(i) {
+    const r = DAILY.rewards[i]
+    if (r.cash) earn(r.cash, new Vector3(player.position.x, player.position.y + 2.4, player.position.z))
+    else giveItem(r.item)
+    state.daily.claimed[i] = true
+  }
+  function celebrate(color) {
+    const p = new Vector3(player.position.x, player.position.y + 1.6, player.position.z)
+    fx.burst(p, { count: 70, color: [color, '#ffffff', '#ffd21f'], speed: 7, up: 5, size: 0.5 })
+    fx.ring(new Vector3(p.x, player.position.y + 0.1, p.z), color, 5, 0.7)
+    sfx.buy()
+  }
+  let dailyView = null
+  function paintDaily() {
+    const d = state.daily
+    const cells = DAILY.rewards.map((r, i) => {
+      const t = r.item ? TREASURE[r.item] : null
+      const rr = t ? RARITY[t.rarity] : null
+      return {
+        day: i + 1,
+        title: t ? t.name : money(r.cash),
+        titleColor: t ? (rr.tier === 6 ? '#ffffff' : rr.color) : '#7dff5a',
+        thumb: t ? thumb(t.id) : null,
+        state: d.claimed[i] ? 'claimed' : i < d.day ? 'claim' : 'locked',
+      }
+    })
+    const left = DAILY.rewards.filter((r, i) => !d.claimed[i])
+    dailyView.set(cells, left.length ? Math.round(left.reduce((a, r) => a + rewardWorth(r), 0) * DAILY.allMarkup) : null)
+  }
+  function dailyFoot() {
+    const d = state.daily
+    if (d.claimed.every(Boolean) || d.day < 7) {
+      const s = Math.max(0, Math.ceil((d.nextAt - Date.now()) / 1000))
+      const hh = String(Math.floor(s / 3600)).padStart(2, '0')
+      const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+      const ss = String(s % 60).padStart(2, '0')
+      hud.setFoot(`Next play day in: ${hh}:${mm}:${ss}`)
+    } else hud.setFoot('All 7 days unlocked!')
+  }
+  function openDaily() {
+    dailyView = hud.dailyView()
+    dailyView.onClaim = (i) => {
+      const r = DAILY.rewards[i]
+      if (r.item && freeRoom() < 1) {
+        hud.toast('No room! Free a carry slot or a base slot first', '#ff6a6a')
+        sfx.deny()
+        return
+      }
+      grant(i)
+      celebrate(r.item ? RARITY[TREASURE[r.item].rarity].glow : '#6dff3a')
+      hud.toast(`Claimed Day ${i + 1}: ${r.item ? TREASURE[r.item].name : money(r.cash)}!`, '#ffd21f')
+      afterClaim()
+    }
+    dailyView.onClaimAll = () => {
+      const d = state.daily
+      const left = DAILY.rewards.map((r, i) => [r, i]).filter(([, i]) => !d.claimed[i])
+      if (!left.length) return
+      const items = left.filter(([r]) => r.item).length
+      if (freeRoom() < items) {
+        hud.toast(`Need room for ${items} items: free carry or base slots first`, '#ff6a6a')
+        sfx.deny()
+        return
+      }
+      const price = Math.round(left.reduce((a, [r]) => a + rewardWorth(r), 0) * DAILY.allMarkup)
+      if (!canAfford(price)) return
+      spend(price)
+      for (const [, i] of left) grant(i)
+      d.day = 7
+      celebrate('#ffd21f')
+      hud.banner('Claimed All!', 'Every Daily Gift is yours', '#ffd21f')
+      afterClaim()
+    }
+    paintDaily()
+    dailyFoot()
+    panelTick = dailyFoot
+    hud.openPanel({
+      title: 'Daily Gifts!',
+      icon: 'gift',
+      color: '#ff2f6d',
+      wide: true,
+      onClosed: () => {
+        interactions.blocked = false
+        panelTick = null
+      },
+      body: dailyView.el,
+    })
+    interactions.blocked = true
+  }
+  function afterClaim() {
+    refreshCarry()
+    refreshBase()
+    dailyTick()
+    paintDaily()
+    save()
   }
 
   // --- Carried loot floats over the player's head -----------------------------------------------------
@@ -751,11 +941,13 @@ export function createGame({ scene, camera, renderer, preset }) {
   // the tower starts stocked so it is never empty to look at
   restock()
   building.resetDoors()
-  if (state.awaySeconds > 60 && totalIncome() > 0) setTimeout(() => hud.toast(`Your base earned ${money(totalIncome() * state.awaySeconds)} while you were away!`, '#6dff3a'), 1500)
+  if (state.awaySeconds > 60 && totalIncome() > 0) setTimeout(() => hud.toast(`Your base earned ${money(totalIncome() * mult() * state.awaySeconds)} while you were away!`, '#6dff3a'), 1500)
   else setTimeout(() => hud.banner('Risky Heist', 'Zipline to the tower and steal everything!', '#ffe14d'), 900)
 
   // --- Per-frame ---------------------------------------------------------------------------------------
   let labelT = 0
+  let panelT = 0
+  let dailyT = 0
   const pos = new Vector3()
   let lastRoom = -1
   return {
@@ -766,15 +958,16 @@ export function createGame({ scene, camera, renderer, preset }) {
     },
     setDensity: (k) => fx.setDensity(k),
     // dev console handle (main.js exposes it as __game.game in dev builds only)
-    debug: { state, heist, building, base, rideToTower, rideHome, steal, bust, save },
+    debug: { state, heist, building, base, rideToTower, rideHome, steal, bust, save, openRebirth, openDaily },
     update(dt, t) {
       pos.set(player.renderPosition.x, player.renderPosition.y, player.renderPosition.z)
       const nowMs = Date.now()
 
       // income into collectors
+      const m = mult()
       for (let i = 0; i < state.unlocked; i++) {
         const s = state.slots[i]
-        if (s.id) s.stored += TREASURE[s.id].income * dt
+        if (s.id) s.stored += TREASURE[s.id].income * m * dt
       }
       labelT -= dt
       if (labelT <= 0) {
@@ -859,6 +1052,18 @@ export function createGame({ scene, camera, renderer, preset }) {
         held.rotation.y += dt * 1.5
       }
 
+      dailyT -= dt
+      if (dailyT <= 0) {
+        dailyT = 1
+        dailyTick()
+      }
+      if (panelTick) {
+        panelT -= dt
+        if (panelT <= 0) {
+          panelT = 0.2
+          panelTick()
+        }
+      }
       swingT = Math.max(0, swingT - dt)
       hub.update(dt, t)
       building.update(dt, t, pos)
