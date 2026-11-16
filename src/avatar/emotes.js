@@ -7,9 +7,6 @@
 import { Euler, MathUtils, Quaternion } from 'three'
 import { apiUrl, onEnvironment, onEmote } from '../bloxity.js'
 
-// The stand-in character (used until player.glb has loaded, or if it fails) has simple arms only.
-const FALLBACK_ALIAS = { ArmL_Offset: 'ArmL1', ArmR_Offset: 'ArmR1' }
-
 const BLEND_IN = 0.1 // s
 const MOVE_STOP = 0.6 // m/s of horizontal speed that cancels the emote
 
@@ -78,7 +75,7 @@ export function createEmotePlayer() {
   let want = '' // the id asked for ('' = none)
   let current = null // { id, clip, t, tracks: [{ bone, rest, keys }] }
   let avatar = null
-  let standard = false // the avatar has the standard rig's bones (player.glb), not the stand-in character
+  let full = false // the avatar is the full standard rig (player.glb)
   let rigRests = new Map() // bone -> bind quaternion, for the bones the animator drives
   const warned = new Set()
   const rests = new WeakMap() // bone -> its bind quaternion, captured before we ever touch it
@@ -116,24 +113,17 @@ export function createEmotePlayer() {
     return rests.get(bone)
   }
 
-  // Maps a clip's bone names onto this character's rig. The standard rig (player.glb) has every bone
-  // the catalogue uses, so it is by name. The simple stand-in character has no *_Offset (shoulder) or
-  // twist bones: a shoulder lift lands on its arm bone and the arm twist is dropped (it would fight it).
-  function boneFor(name) {
-    const nodes = avatar.nodes
-    if (standard) return nodes[name]
-    if (name === 'ArmL1' || name === 'ArmR1') return null
-    return nodes[FALLBACK_ALIAS[name] ?? name]
-  }
-
   function begin(clip, id) {
     clear()
     if (!avatar?.nodes) return
     const tracks = []
     for (const [name, keys] of Object.entries(clip.tracks)) {
-      const bone = boneFor(name)
+      // By bone name: the catalogue's bones (the 12 it uses: Neck1, Spine1, Arm*_Offset, Arm*1, Arm*2,
+      // Leg*1, Leg*2) are all on player.glb, and the stand-in character has the same names except the
+      // elbows and knees, which are skipped. A bone missing from a FULL rig is worth a warning.
+      const bone = avatar.nodes[name]
       if (!bone) {
-        if (standard && !warned.has(name)) {
+        if (full && !warned.has(name)) {
           warned.add(name)
           console.warn(`[emotes] the rig has no bone "${name}"; its track is skipped`)
         }
@@ -178,7 +168,7 @@ export function createEmotePlayer() {
     setAvatar(next, animator) {
       const was = current?.id
       avatar = next
-      standard = !!next?.nodes?.ArmR_Offset
+      full = !!next?.nodes?.ArmR2 // the full rig (player.glb) has elbows; the stand-in character does not
       rigRests = new Map((animator?.rig?.bindings ?? []).map((b) => [b.bone, b.rest]))
       current = null
       if (was) notify('')
