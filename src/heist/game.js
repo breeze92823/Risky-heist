@@ -15,7 +15,8 @@ import { syncYawToPlayer } from '../camera.js'
 import { inputState } from '../input.js'
 import { applyArmPose, makeTrolley, swingAmount } from './bodyFx.js'
 import { createFx } from './fx.js'
-import { sfx } from './sfx.js'
+import { setSfxEnabled, sfx } from './sfx.js'
+import { music } from './music.js'
 import { buildHub, drawStatsBoard, drawTimerBoard } from './hub.js'
 import { buildBuilding } from './building.js'
 import { createBase } from './base.js'
@@ -48,6 +49,7 @@ function freshState() {
     spawns: Object.fromEntries(TIMED_SPAWNS.map((s) => [s.rarity, now + s.seconds * 1000])),
     pending: {},
     lastSeen: now,
+    prefs: { music: true, sfx: true }, // the Settings window
   }
 }
 const cashMult = (rebirths) => 1 + REBIRTH.step * rebirths
@@ -66,6 +68,7 @@ function parseSave(d) {
     s.pending = { ...d.pending }
     s.slots = Array.from({ length: SLOT_COUNT }, (_, i) => ({ id: d.slots?.[i]?.id && TREASURE[d.slots[i].id] ? d.slots[i].id : null, stored: Number(d.slots?.[i]?.stored) || 0 }))
     s.carried = (d.carried ?? []).filter((id) => TREASURE[id])
+    s.prefs = { music: d.prefs?.music !== false, sfx: d.prefs?.sfx !== false }
     // collectors keep filling while the game was closed (capped)
     const away = Math.min(BASE.offlineCapSeconds, Math.max(0, (Date.now() - (d.lastSeen ?? Date.now())) / 1000))
     s.rebirths = Math.max(0, Math.floor(Number(d.rebirths) || 0))
@@ -167,6 +170,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     for (const k of Object.keys(state)) delete state[k]
     Object.assign(state, next)
     hud.setMoney(state.money)
+    applyPrefs()
     refreshCarry()
     refreshBase()
     redrawBoards()
@@ -188,6 +192,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     onRandomTreasure: buyRandom,
     onIndex: openIndex,
     onGuide: openGuide,
+    onSettings: openSettings,
     onRebirth: openRebirth,
     onGifts: openDaily,
     onWatchAd: watchAd,
@@ -376,7 +381,10 @@ export function createGame({ scene, camera, renderer, preset }) {
     if (escaped) {
       const n = state.carried.length
       hud.banner(n ? 'Escaped!' : 'Back Home', n ? `${n} item${n > 1 ? 's' : ''} stolen - place them on your base` : 'Better luck next time', n ? '#6dff3a' : '#ffffff')
-      if (n) sfx.buy()
+      if (n) {
+        sfx.buy()
+        music.stinger('escape')
+      }
     }
     save()
   }
@@ -837,6 +845,45 @@ export function createGame({ scene, camera, renderer, preset }) {
     interactions.blocked = true
   }
 
+  // --- Settings ---------------------------------------------------------------------------------------
+  // Music and sound effects switches, saved with the progress (signed-in players keep them).
+  function applyPrefs() {
+    music.setEnabled(state.prefs.music)
+    setSfxEnabled(state.prefs.sfx)
+  }
+  function openSettings() {
+    const toggle = (key, name, text) =>
+      hud.row({
+        name,
+        nameColor: '#cfc6ff',
+        lines: [{ text }],
+        button: {
+          label: state.prefs[key] ? 'ON' : 'OFF',
+          cls: 'toggle',
+          color: state.prefs[key] ? '#3fcf2a' : '#ff4a5a',
+          onClick: () => {
+            state.prefs[key] = !state.prefs[key]
+            applyPrefs()
+            save()
+            openSettings()
+          },
+        },
+      })
+    hud.openPanel({
+      title: 'Settings',
+      icon: 'settings',
+      color: '#8a7bff',
+      onClosed: () => (interactions.blocked = false),
+      body: frag([
+        toggle('music', 'Music', 'Spy soundtrack that speeds up as the Jail Chance rises'),
+        toggle('sfx', 'Sound Effects', 'Buttons, police, footsteps, loot and the world around you'),
+        div('panel-note', 'Overall volume is in the game menu settings.'),
+      ]),
+    })
+    interactions.blocked = true
+  }
+  applyPrefs()
+
   // --- Rebirth ---------------------------------------------------------------------------------------
   let panelTick = null // live refresh for the open panel (the rebirth progress bar)
   function openRebirth() {
@@ -1089,6 +1136,7 @@ export function createGame({ scene, camera, renderer, preset }) {
   const pos = new Vector3()
   const audioMe = {}
   const audioCops = {}
+  const musicState = {}
   let lastRoom = -1
   return {
     hud,
@@ -1109,7 +1157,7 @@ export function createGame({ scene, camera, renderer, preset }) {
       return () => saveListeners.delete(fn)
     },
     // dev console handle (main.js exposes it as __game.game in dev builds only)
-    debug: { state, heist, building, get base() { return base }, bases, rideToTower, rideHome, steal, bust, save, openRebirth, openDaily },
+    debug: { state, heist, building, get base() { return base }, bases, rideToTower, rideHome, steal, bust, save, openRebirth, openDaily, openSettings, music, sfx },
     update(dt, t) {
       pos.set(player.renderPosition.x, player.renderPosition.y, player.renderPosition.z)
       const nowMs = Date.now()
@@ -1250,6 +1298,13 @@ export function createGame({ scene, camera, renderer, preset }) {
       audioCops.alarm = watch ? hub.police.alarm : 0
       audioCops.busted = heist.busted
       sfx.frame(dt, camera, audioMe, audioCops)
+      musicState.zone = zone
+      musicState.riding = !!heist.riding
+      musicState.heat = heist.heat
+      musicState.awake = policeAwake
+      musicState.alarm = audioCops.alarm
+      musicState.busted = heist.busted
+      music.frame(musicState)
       building.update(dt, t, pos)
       for (const b of bases) b.update(dt, t)
       interactions.update(dt, pos)
@@ -1262,8 +1317,10 @@ export function createGame({ scene, camera, renderer, preset }) {
       }
     },
     // After the animator: arm overrides (zipline hang, hitting swings).
-    animate(animator) {
-      applyArmPose(animator?.rig, { ride: !!heist.riding, swing: swingAmount(swingT), holding: !!heldId })
+    // `emoting` = a portal emote is playing: it owns the arms, so the "holding loot" pose steps aside
+    // (the ride and door-swing poses can't overlap an emote: moving stops it).
+    animate(animator, emoting = false) {
+      applyArmPose(animator?.rig, { ride: !!heist.riding, swing: swingAmount(swingT), holding: !!heldId && !emoting })
     },
     // What the others see of this player's body (net.js sends it with the pose): the best carried
     // treasure (floating over the head), the zipline ride and the door swing.

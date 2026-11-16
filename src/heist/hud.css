@@ -176,6 +176,13 @@
 .hud-btn.guide .ico {
   background: linear-gradient(#ffb84a, #ef7a12);
 }
+.hud-btn.settings .ico {
+  background: linear-gradient(#a99cff, #5b45e0);
+}
+/* Settings window: an ON / OFF switch per row */
+.hud-btn.prow-btn.toggle {
+  min-width: clamp(84px, 14vmin, 120px);
+}
 .hud-btn .lbl {
   font-size: clamp(14px, 2.6vmin, 26px);
   font-weight: 700;
@@ -1131,6 +1138,15 @@
   }
   .hud-left {
     top: max(calc(var(--reserved-top) + 8px), 30vh);
+  }
+}
+/* Short screens (phone landscape): under the portal's reserved corner there is only room for one
+   row, so the five left buttons line up side by side instead of falling under the money counter. */
+@media (max-height: 500px) {
+  .hud-left {
+    flex-direction: row;
+    align-items: flex-start;
+    top: max(calc(var(--reserved-top) + 6px), 20vh);
   }
 }
 /* Touch layout: the joystick and look zones live under the HUD; keep the

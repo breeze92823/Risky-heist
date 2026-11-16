@@ -23,6 +23,12 @@ let muted = false
 let hidden = false
 
 const rnd = (a, b) => a + Math.random() * (b - a)
+// Voice budget: every one-shot oscillator / noise source counts until it ends. Over the cap new
+// one-shots are dropped instead of overloading the audio thread (that is what crackles).
+const VOICE_CAP = window.matchMedia?.('(pointer: coarse)').matches ? AUDIO.voices.mobile : AUDIO.voices.desktop
+let voices = 0
+const free = () => voices--
+const full = () => voices >= VOICE_CAP
 const clamp01 = (v) => Math.min(1, Math.max(0, v))
 const ready = () => ctx && ctx.state === 'running'
 
@@ -38,6 +44,22 @@ export function setVolume(v) {
 export function setMuted(on) {
   muted = !!on
   applyGain()
+}
+// The Settings window's Sound Effects switch: silences every effect bus (music has its own, music.js).
+let fxOn = true
+const applyFx = () => {
+  if (!bus) return
+  const t = ctx.currentTime
+  for (const k of ['ui', 'world', 'police', 'amb']) bus[k].gain.setTargetAtTime(fxOn ? AUDIO.bus[k === 'amb' ? 'ambience' : k] : 0, t, 0.05)
+}
+export function setSfxEnabled(on) {
+  fxOn = !!on
+  applyFx()
+}
+// The shared context for music.js: null until the first gesture has started audio.
+export function audioCore() {
+  if (!ctx || ctx.state !== 'running') return null
+  return { ctx, master, verb: bus.verb, noise: noiseBuf }
 }
 
 // --- Context + mix --------------------------------------------------------------------------------
@@ -83,14 +105,21 @@ function ensure() {
     if (!AC) return null
     ctx = new AC({ latencyHint: 'interactive' })
     const comp = ctx.createDynamicsCompressor()
-    comp.threshold.value = -14
-    comp.knee.value = 10
-    comp.ratio.value = 4
-    comp.attack.value = 0.004
-    comp.release.value = 0.2
+    comp.threshold.value = -10
+    comp.knee.value = 8
+    comp.ratio.value = 3
+    comp.attack.value = 0.006
+    comp.release.value = 0.25
+    // a fast limiter after the glue compressor: stacked hits can never clip into crackle
+    const lim = ctx.createDynamicsCompressor()
+    lim.threshold.value = -2
+    lim.knee.value = 0
+    lim.ratio.value = 20
+    lim.attack.value = 0.001
+    lim.release.value = 0.08
     master = ctx.createGain()
     master.gain.value = 0
-    master.connect(comp).connect(ctx.destination)
+    master.connect(comp).connect(lim).connect(ctx.destination)
     applyGain()
     const mk = (level) => {
       const g = ctx.createGain()
@@ -104,6 +133,7 @@ function ensure() {
     const verbOut = ctx.createGain()
     verbOut.gain.value = 1
     verb.connect(verbOut).connect(master)
+    bus.verb = verb
     bus.verbSend = ctx.createGain()
     bus.verbSend.gain.value = AUDIO.reverb.outdoor
     bus.verbSend.connect(verb)
@@ -116,6 +146,7 @@ function ensure() {
     bus.ambLp.connect(bus.amb)
     noiseBuf = makeNoise(3)
     brownBuf = makeNoise(4, true)
+    applyFx()
   } catch {
     ctx = null
   }
@@ -144,7 +175,7 @@ function env(g, t0, a, peak, d) {
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + a + d)
 }
 function tone(freq, { type = 'sine', at = 0, a = 0.004, d = 0.2, peak = 0.3, slide = null, out = bus?.world, detune = 0 } = {}) {
-  if (!ready()) return
+  if (!ready() || full()) return
   const t0 = ctx.currentTime + at
   const o = ctx.createOscillator()
   const g = ctx.createGain()
@@ -154,11 +185,13 @@ function tone(freq, { type = 'sine', at = 0, a = 0.004, d = 0.2, peak = 0.3, sli
   if (slide) o.frequency.exponentialRampToValueAtTime(slide, t0 + a + d)
   env(g, t0, a, peak, d)
   o.connect(g).connect(out)
+  voices++
+  o.onended = free
   o.start(t0)
   o.stop(t0 + a + d + 0.05)
 }
 function noise({ at = 0, a = 0.002, d = 0.25, peak = 0.4, type = 'highpass', freq = 2000, q = 0.7, sweep = null, out = bus?.world, brown = false, rate = 1 } = {}) {
-  if (!ready()) return
+  if (!ready() || full()) return
   const t0 = ctx.currentTime + at
   const s = ctx.createBufferSource()
   s.buffer = brown ? brownBuf : noiseBuf
@@ -171,6 +204,8 @@ function noise({ at = 0, a = 0.002, d = 0.25, peak = 0.4, type = 'highpass', fre
   const g = ctx.createGain()
   env(g, t0, a, peak, d)
   s.connect(f).connect(g).connect(out)
+  voices++
+  s.onended = free
   s.start(t0, Math.random() * 1.5)
   s.stop(t0 + a + d + 0.05)
 }
@@ -191,7 +226,7 @@ function coins(n, { at = 0, spread = 0.05, peak = 0.07, out = bus?.world } = {})
   }
 }
 function whoosh({ at = 0, d = 0.25, from = 400, to = 2500, peak = 0.25, out = bus?.ui, q = 1.2 } = {}) {
-  if (!ready()) return
+  if (!ready() || full()) return
   const t0 = ctx.currentTime + at
   const s = ctx.createBufferSource()
   s.buffer = noiseBuf
@@ -889,3 +924,30 @@ export const sfx = {
     police.wasAwake = cops.awake
   },
 }
+
+// --- Overlap control --------------------------------------------------------------------------------
+// The same sound re-triggered faster than its gap is dropped (a cash pad credits every frame, a
+// prompt can flicker between two targets, buttons get mashed): stacked copies smear into noise.
+// Minor UI blips (hover, prompt, toast, click) also step aside right after a major sound.
+const GAPS = {
+  click: 0.05, hover: 0.07, disabled: 0.12, prompt: 0.3, open: 0.12, close: 0.12, toast: 0.25, banner: 0.4,
+  deny: 0.25, buy: 0.15, cash: 0.22, reward: 0.4, rebirth: 1.5, teleport: 0.3,
+  hit: 0.1, doorBreak: 0.25, glass: 0.15, steal: 0.1, place: 0.12, floor: 0.4, jump: 0.12, land: 0.2,
+  busted: 2, star: 0.5, policeSleep: 0.5, policeWake: 0.5,
+}
+const MINOR = new Set(['click', 'hover', 'prompt', 'toast', 'disabled'])
+const lastAt = {}
+let lastMajor = -1
+for (const [key, gap] of Object.entries(GAPS)) {
+  const play = sfx[key]
+  sfx[key] = function (...args) {
+    if (!ready()) return
+    const now = ctx.currentTime
+    if (now - (lastAt[key] ?? -1) < gap) return
+    if (MINOR.has(key) && key !== 'click' && now - lastMajor < 0.15) return
+    lastAt[key] = now
+    if (!MINOR.has(key)) lastMajor = now
+    return play.apply(this, args)
+  }
+}
+

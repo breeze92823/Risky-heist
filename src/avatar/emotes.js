@@ -7,6 +7,9 @@
 import { Euler, MathUtils, Quaternion } from 'three'
 import { apiUrl, onEnvironment, onEmote } from '../bloxity.js'
 
+// The stand-in character (used until player.glb has loaded, or if it fails) has simple arms only.
+const FALLBACK_ALIAS = { ArmL_Offset: 'ArmL1', ArmR_Offset: 'ArmR1' }
+
 const BLEND_IN = 0.1 // s
 const MOVE_STOP = 0.6 // m/s of horizontal speed that cancels the emote
 
@@ -75,6 +78,9 @@ export function createEmotePlayer() {
   let want = '' // the id asked for ('' = none)
   let current = null // { id, clip, t, tracks: [{ bone, rest, keys }] }
   let avatar = null
+  let standard = false // the avatar has the standard rig's bones (player.glb), not the stand-in character
+  let rigRests = new Map() // bone -> bind quaternion, for the bones the animator drives
+  const warned = new Set()
   const rests = new WeakMap() // bone -> its bind quaternion, captured before we ever touch it
   const euler = new Euler()
   const q = new Quaternion()
@@ -100,15 +106,41 @@ export function createEmotePlayer() {
     begin(emote.clip, id)
   }
 
+  // The bind quaternion of a bone: the animator's rig knows it for the bones it drives (their current
+  // quaternion is an animated pose, never the bind); every other bone sits at bind until an emote
+  // touches it, so the first read is the bind (and clear() always puts it back).
+  function restOf(bone) {
+    const rig = rigRests.get(bone)
+    if (rig) return rig
+    if (!rests.has(bone)) rests.set(bone, bone.quaternion.clone())
+    return rests.get(bone)
+  }
+
+  // Maps a clip's bone names onto this character's rig. The standard rig (player.glb) has every bone
+  // the catalogue uses, so it is by name. The simple stand-in character has no *_Offset (shoulder) or
+  // twist bones: a shoulder lift lands on its arm bone and the arm twist is dropped (it would fight it).
+  function boneFor(name) {
+    const nodes = avatar.nodes
+    if (standard) return nodes[name]
+    if (name === 'ArmL1' || name === 'ArmR1') return null
+    return nodes[FALLBACK_ALIAS[name] ?? name]
+  }
+
   function begin(clip, id) {
     clear()
     if (!avatar?.nodes) return
     const tracks = []
     for (const [name, keys] of Object.entries(clip.tracks)) {
-      const bone = avatar.nodes[name]
-      if (!bone || !Array.isArray(keys) || !keys.length) continue
-      if (!rests.has(bone)) rests.set(bone, bone.quaternion.clone())
-      tracks.push({ bone, rest: rests.get(bone), keys })
+      const bone = boneFor(name)
+      if (!bone) {
+        if (standard && !warned.has(name)) {
+          warned.add(name)
+          console.warn(`[emotes] the rig has no bone "${name}"; its track is skipped`)
+        }
+        continue
+      }
+      if (!Array.isArray(keys) || !keys.length) continue
+      tracks.push({ bone, rest: restOf(bone), keys })
     }
     if (tracks.length) {
       current = { id, clip, t: 0, tracks }
@@ -141,12 +173,20 @@ export function createEmotePlayer() {
       want = ''
       stop()
     },
-    // The avatar was rebuilt (sign-in, customizer edit): its bones are new objects.
-    setAvatar(next) {
+    // The avatar was rebuilt (sign-in, customizer edit): its bones are new objects. `animator` is the
+    // one driving it (its rig holds the bind pose of the bones it animates).
+    setAvatar(next, animator) {
       const was = current?.id
       avatar = next
+      standard = !!next?.nodes?.ArmR_Offset
+      rigRests = new Map((animator?.rig?.bindings ?? []).map((b) => [b.bone, b.rest]))
       current = null
       if (was) notify('')
+    },
+    // Plays a clip directly ({ len, loop, tracks }): for tests and tools.
+    playClip(id, clip) {
+      want = id
+      begin(clip, id)
     },
     // After the animator wrote this frame's pose. `speed` = horizontal m/s, `grounded` = on the floor.
     update(dt, speed, grounded) {

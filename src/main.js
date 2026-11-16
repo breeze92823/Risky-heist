@@ -111,7 +111,7 @@ function setAvatar(next) {
   avatar = next
   playerGroup.add(avatar)
   animator = makeAnimator(avatar)
-  emotes.setAvatar(avatar)
+  emotes.setAvatar(avatar, animator)
 }
 
 // --- Chat bubbles -------------------------------------------------------------
@@ -215,7 +215,7 @@ renderer.setAnimationLoop(() => {
   emotes.update(dt, speed, player.grounded) // a portal emote plays on top of the animator until you move
   sendPose(player, speed, game.bodyState()) // the others see you move, carry loot, ride the zipline
   remotes.update(dt, net.players, net.sessionId, player.position) // ...and you see the ones near you
-  game.animate(animator)
+  game.animate(animator, emotes.playing)
 
   updateCamera(camera, dt)
   game.fx.applyShake(dt)

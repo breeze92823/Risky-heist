@@ -21,11 +21,13 @@ import {
 } from './bloxity.js'
 
 const AVATAR_MAX = 3000 // backend AVATAR_MAX_LEN
+const CONSENTED = 4000 // Colyseus close code of a deliberate server-side leave (a duplicate session being evicted)
 
 export const net = {
   room: null,
   connected: false,
   hydrated: false, // the server answered for the current identity: saving is allowed
+  link: null, // { client, endpoint, relayRoomId }: how the current room was reached (see rejoin)
   // The live roster (server WorldState.players, sessionId -> PlayerState) and this player's own id:
   // remotePlayers.js draws everyone else from it every frame.
   get players() {
@@ -194,16 +196,21 @@ export function verifyAdReward(token, placement) {
 }
 
 // --- Connection --------------------------------------------------------------
-function attach(room, relayRoomId = '') {
+// `link` = { client, endpoint, relayRoomId }: how this room was reached, kept so a dropped connection can
+// come back to the SAME room. `resumed` = this is the same server session again after a drop (nothing
+// is re-sent by the server: the save was loaded long ago), `hydrated` = it had answered before the drop.
+function attach(room, link, { resumed = false, hydrated = false } = {}) {
   net.room = room
+  net.link = link
   net.connected = true
-  net.hydrated = false
+  net.hydrated = resumed && hydrated
   lastBaseKey = ''
   lastPose = ''
   sentAvatar = null
-  known = null
+  if (resumed) lastKey = '' // push the local state: it is newer than the server's copy
+  else known = null
   // The portal's friend invites land in this room: "<relay>~<room>" for a pod behind the matchmaker.
-  updateRoom(relayRoomId ? `${relayRoomId}~${room.roomId}` : room.roomId)
+  updateRoom(link.relayRoomId ? `${link.relayRoomId}~${room.roomId}` : room.roomId)
 
   room.onMessage('progress', (doc) => {
     // A reconnect within the same page keeps the local state: it is newer than the server's copy.
@@ -235,20 +242,62 @@ function attach(room, relayRoomId = '') {
   })
   // Not drawn yet, but the server sends them: registering stops the SDK warning about each one.
   room.onMessage('leaderboard', () => {})
-  room.onLeave(() => {
+  room.onLeave((code) => {
     if (net.room !== room) return
+    const wasHydrated = net.hydrated
     net.room = null
     net.connected = false
     net.hydrated = false
     clearTimeout(timer)
     timer = 0
-    updateRoom('') // not joinable any more
     sentAvatar = null
-    attempt = 0
-    setTimeout(connect, 1000) // the room closed under us: resolve and rejoin; local play goes on meanwhile
+    if (code === CONSENTED) {
+      // The server closed this connection on purpose: the same account signed in somewhere else. Rejoining
+      // would only throw that session out in turn, so this page stays offline.
+      updateRoom('')
+      game?.toast('You signed in somewhere else - this page is playing offline', '#ff6a6a')
+      return
+    }
+    void rejoin(link, room.roomId, room.reconnectionToken, wasHydrated)
   })
   syncIdentity()
   syncAvatar()
+}
+
+// A dropped connection (WiFi blip, a room restart) must bring the player back to the room their friends
+// are in -- never matchmake into a new one (Boxity's Play with friends / CrazyGames rule). In order:
+// 1. the same session (the server keeps it NET.rejoinSeconds, `allowReconnection`): same base, same state;
+// 2. the same room by id on the same server link, as a new session;
+// 3. only if that room is gone, normal matchmaking.
+// Local play goes on meanwhile.
+let rejoining = false
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+async function rejoin(link, roomId, token, wasHydrated) {
+  rejoining = true
+  try {
+    const deadline = performance.now() + NET.rejoinSeconds * 1000
+    for (let i = 0; token && performance.now() < deadline; i++) {
+      try {
+        attach(await link.client.reconnect(token), link, { resumed: true, hydrated: wasHydrated })
+        return
+      } catch {
+        await sleep(Math.min(3000, 500 * 2 ** i))
+      }
+    }
+    try {
+      const id = identity()
+      sentKey = id.key
+      const room = await new Client(link.endpoint).joinById(roomId, { token: id.token, username: id.username, pfp: id.pfp })
+      attach(room, link)
+      return
+    } catch {
+      // the room is gone or full
+    }
+  } finally {
+    rejoining = false
+  }
+  attempt = 0
+  connect()
 }
 
 // Bloxity hosting has no fixed socket URL: the SDK resolves the endpoint of this game's server (a
@@ -270,8 +319,9 @@ async function joinLaunchRoom(id) {
   try {
     const where = await locateRoom(wanted)
     if (!where) return null
-    const room = await new Client(where.endpoint).joinById(where.roomId, id)
-    return { room, relayRoomId: where.relayRoomId }
+    const client = new Client(where.endpoint)
+    const room = await client.joinById(where.roomId, id)
+    return { room, link: { client, endpoint: where.endpoint, relayRoomId: where.relayRoomId } }
   } catch (err) {
     console.warn('[net] could not join the launch room; matchmaking instead', err?.message ?? err)
     return null
@@ -284,17 +334,18 @@ let connecting = false
 let attempt = 0
 let attemptsSince = 0
 async function connect() {
-  if (connecting || net.connected) return
+  if (connecting || rejoining || net.connected) return
   connecting = true
   try {
     const id = identity()
     sentKey = id.key
     const options = { token: id.token, username: id.username, pfp: id.pfp }
     const launched = await joinLaunchRoom(options)
-    if (launched) attach(launched.room, launched.relayRoomId)
+    if (launched) attach(launched.room, launched.link)
     else {
       const { endpoint, relayRoomId } = await serverUrl(id)
-      attach(await new Client(endpoint).joinOrCreate('world', options), relayRoomId)
+      const client = new Client(endpoint)
+      attach(await client.joinOrCreate('world', options), { client, endpoint, relayRoomId })
     }
     attempt = 0
     attemptsSince = 0
