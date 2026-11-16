@@ -1,7 +1,7 @@
 // Colyseus link to Risky-heist-backend (room "world"): loads the signed-in player's progress from
 // the server, mirrors every save to it, shows who owns which hub base, and tells the Bloxity portal
 // which room the player is in. Never throws and never blocks play: with no server (or an unreachable
-// one) the game simply runs offline on its local copy (`localStorage`, game.js save()).
+// one) the game simply runs offline with nothing saved (progress is never stored in the browser).
 //
 // A room holds 6 players and every player owns one of the hub's 6 plots (see readRoster below).
 //
