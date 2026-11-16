@@ -438,11 +438,13 @@ function createPatrol(live, bars, loop, spurZ, tunnelX) {
   const ray = new Vector3()
   let seen = 0 // seconds the player has stood in a spot
   let seenBy = null
+  // For the sound (sfx.js): each cruiser's ground position + speed, and how close a spot is to catching.
+  const audio = { cars: cars.map(() => ({ x: 0, z: 0, v: 0 })), alarm: 0 }
 
   // awake: false while the police are asleep (searchlights off). watch: the player can be caught now
   // (on the heist bank, on the ground outside the building, not riding or already busted).
   // Returns true the moment the player has been held in a spot for S.catchTime.
-  return function update(dt, t, playerPos, awake = true, watch = false) {
+  function update(dt, t, playerPos, awake = true, watch = false) {
     const ahead = Math.round(7 / step)
     let inside = null
     for (let k = 0; k < cars.length; k++) {
@@ -468,6 +470,10 @@ function createPatrol(live, bars, loop, spurZ, tunnelX) {
       c.v += Math.sign(target - c.v) * Math.min(Math.abs(target - c.v), acc * dt)
       c.d = (c.d + c.v * dt) % length
       place(c)
+      const a = audio.cars[k]
+      a.x = c.g.position.x
+      a.z = c.g.position.z
+      a.v = c.v
 
       // searchlight: sweeps side to side ahead of the car, never onto the front road (safe zone)
       const on = awake && Math.abs(c.g.position.x) < tunnelX - 1
@@ -497,6 +503,7 @@ function createPatrol(live, bars, loop, spurZ, tunnelX) {
       seenBy = inside
     } else seen = Math.max(0, seen - dt * 2)
     const alarm = Math.min(1, seen / S.catchTime)
+    audio.alarm = alarm
     for (const c of cars) {
       const col = c.spotMat.uniforms.uColor.value
       col.copy(SAFE)
@@ -509,6 +516,8 @@ function createPatrol(live, bars, loop, spurZ, tunnelX) {
     }
     return false
   }
+  update.audio = audio
+  return update
 }
 
 export function buildHub(scene) {
@@ -771,6 +780,7 @@ export function buildHub(scene) {
     groundPadAt: new Vector3(gz.x, 0.3, gz.z - 2.2),
     timerSign,
     statsSign,
+    police: patrol.audio, // { cars: [{ x, z, v }], alarm } for sfx.js
     // Returns true when a police searchlight has caught the player (see createPatrol).
     update(dt, t, playerPos, policeAwake = true, watch = false) {
       const caught = patrol(dt, t, playerPos, policeAwake, watch)

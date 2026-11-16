@@ -6,6 +6,8 @@
 import './hud.css'
 import * as bloxity from '../bloxity.js'
 import { commas, money } from './kit.js'
+import { AUDIO } from '../config.js'
+import { sfx } from './sfx.js'
 
 const STAR = '<svg viewBox="0 0 24 24"><path d="M12 1.8l3.1 6.6 7.2.9-5.3 5 1.4 7.1L12 17.9l-6.4 3.5 1.4-7.1-5.3-5 7.2-.9z"/></svg>'
 const ICON = {
@@ -40,8 +42,15 @@ function button(cls, html, fn) {
   b.addEventListener('pointerdown', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    if (!b.classList.contains('off')) fn(b)
+    if (b.classList.contains('off')) return sfx.disabled()
+    sfx.click()
+    fn(b)
   })
+  // a soft tick when the mouse moves onto a button (never on touch: no hover there)
+  if (AUDIO.hover)
+    b.addEventListener('pointerenter', (e) => {
+      if (e.pointerType === 'mouse' && !b.classList.contains('off')) sfx.hover()
+    })
   return b
 }
 
@@ -135,7 +144,10 @@ export function createHud(actions) {
   panelWrap.append(panel, panelFoot)
   shade.appendChild(panelWrap)
   shade.addEventListener('pointerdown', (e) => {
-    if (e.target === shade) closePanel()
+    if (e.target === shade) {
+      sfx.click()
+      closePanel()
+    }
   })
   document.body.appendChild(shade)
   let panelOpen = false
@@ -148,6 +160,7 @@ export function createHud(actions) {
     panelFoot.classList.add('hidden')
     panelBody.replaceChildren(body)
     shade.classList.remove('hidden')
+    if (!panelOpen) sfx.open()
     panelOpen = true
     onClose = onClosed ?? null
     if (document.pointerLockElement) document.exitPointerLock?.()
@@ -157,6 +170,7 @@ export function createHud(actions) {
     if (!panelOpen) return
     shade.classList.add('hidden')
     bloxity.hideAdScreen()
+    sfx.close()
     panelOpen = false
     onClose?.()
     onClose = null
@@ -296,6 +310,7 @@ export function createHud(actions) {
       t.textContent = text
       t.style.color = color
       toasts.appendChild(t)
+      if (color !== '#ff6a6a') sfx.toast() // red toasts come with their own deny / bust sound
       while (toasts.children.length > 4) toasts.firstChild.remove()
       setTimeout(() => t.classList.add('out'), 2400)
       setTimeout(() => t.remove(), 3000)
@@ -307,6 +322,7 @@ export function createHud(actions) {
       banner.classList.remove('hidden', 'show')
       void banner.offsetWidth
       banner.classList.add('show')
+      sfx.banner()
     },
     busted() {
       busted.classList.remove('hidden', 'show')
@@ -412,6 +428,7 @@ function dailyView() {
           card.addEventListener('pointerdown', (e) => {
             e.preventDefault()
             e.stopPropagation()
+            sfx.click()
             view.onClaim?.(i)
           })
         }

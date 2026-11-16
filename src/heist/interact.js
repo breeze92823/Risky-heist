@@ -5,6 +5,7 @@
 // while the key or finger stays down (breaking doors).
 import { Vector3 } from 'three'
 import { COARSE_POINTER } from '../config.js'
+import { sfx } from './sfx.js'
 
 export function createInteractions(camera) {
   const targets = new Set()
@@ -89,6 +90,7 @@ export function createInteractions(camera) {
       if (best !== current) {
         current = best
         holding = false
+        if (best) sfx.prompt()
       }
       if (!current) {
         el.classList.add('hidden')
