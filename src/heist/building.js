@@ -330,17 +330,28 @@ export function buildBuilding(scene, { fx, sfx }) {
   }
   function drawBar(door) {
     door.bar.setDraw((ctx, w, h) => {
-      ctx.fillStyle = '#2a0a26'
+      // A plain health bar (no number): dark frame, a fill that runs green -> yellow -> red as the
+      // door weakens, a shine strip on top.
+      ctx.fillStyle = '#14081f'
       roundRect(ctx, 0, 0, w, h, 28)
       ctx.fill()
-      const k = door.max > 0 ? door.hp / door.max : 0
-      const g = ctx.createLinearGradient(0, 0, 0, h)
-      g.addColorStop(0, '#ff6ad5')
-      g.addColorStop(1, '#e0207f')
-      ctx.fillStyle = g
-      roundRect(ctx, 6, 6, Math.max(20, (w - 12) * k), h - 12, 22)
+      ctx.fillStyle = '#3a2a44'
+      roundRect(ctx, 6, 6, w - 12, h - 12, 22)
       ctx.fill()
-      outlinedText(ctx, `${Math.ceil(door.hp)}/${door.max}`, w / 2, h / 2 + 2, 40, '#ffffff', '#3a0626')
+      const k = door.max > 0 ? Math.max(0, Math.min(1, door.hp / door.max)) : 0
+      if (k > 0) {
+        const [top, bot] = k > 0.5 ? ['#8dff5a', '#2fbf1f'] : k > 0.25 ? ['#ffe44d', '#f0a10f'] : ['#ff6a5a', '#d81f2a']
+        const g = ctx.createLinearGradient(0, 6, 0, h - 6)
+        g.addColorStop(0, top)
+        g.addColorStop(1, bot)
+        ctx.fillStyle = g
+        const fw = Math.max(h - 12, (w - 12) * k)
+        roundRect(ctx, 6, 6, fw, h - 12, 22)
+        ctx.fill()
+        ctx.fillStyle = 'rgba(255,255,255,0.35)'
+        roundRect(ctx, 14, 10, Math.max(0, fw - 16), (h - 12) * 0.28, 8)
+        ctx.fill()
+      }
     })
     door.barBack.material = door.bar.mesh.material
   }
