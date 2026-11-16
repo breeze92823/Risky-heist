@@ -1,7 +1,7 @@
 // DOM HUD: police stars + Jail Chance (top), money (bottom-left), carried loot
-// hotbar and Home / Place Best / Sell (bottom centre), Index + Guide (left),
-// Stop Police + Random Treasure cash boosts (right), toasts, a floor banner,
-// the BUSTED overlay, the siren vignette and modal panels (stalls, index, guide).
+// hotbar and Home / Place Best / Sell (bottom centre), Index / Rebirth / Gifts / Guide / Settings
+// (left), Stop Police + Random Treasure cash boosts (right), toasts, a floor banner, the BUSTED
+// overlay, the siren vignette and modal panels (stalls, index, guide, settings).
 // Every control is a pointerdown button (touch + mouse); layout is relative units.
 import './hud.css'
 import * as bloxity from '../bloxity.js'
@@ -16,6 +16,7 @@ const ICON = {
   zzz: '<svg viewBox="0 0 24 24"><path d="M4 6h7l-7 8h7M13 3h6l-6 6h6M14 15h4l-4 5h4"/></svg>',
   gift: '<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="12" rx="1.5"/><path d="M3 13h18M12 9v12M12 9C9 9 7 7.5 7.8 5.6 8.7 3.5 11 5 12 9zM12 9c3 0 5-1.5 4.2-3.4C15.3 3.5 13 5 12 9z"/></svg>',
   ad: '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/><circle cx="12" cy="12" r="6.6"/></svg>',
   rebirth: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-13.7 5.6"/><path d="M4 12A8 8 0 0 1 17.7 6.4"/><path d="M17.5 2.5v4h-4M6.5 21.5v-4h4"/></svg>',
 }
 // Big colourful icons for the window title tabs (self-coloured, not stroke-tinted).
@@ -27,6 +28,7 @@ const TAB_ICON = {
   tools: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#c56bff" stroke="#14081f" stroke-width="4"/><path d="M22 48 40 30" stroke="#14081f" stroke-width="11" stroke-linecap="round"/><path d="M22 48 40 30" stroke="#d9a35a" stroke-width="5" stroke-linecap="round"/><path d="M30 18l10-4 12 12-4 10-6-6-6 2-4-4 2-6z" fill="#dfe4ee" stroke="#14081f" stroke-width="3.5" stroke-linejoin="round"/></svg>',
   sell: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#4ddc2a" stroke="#14081f" stroke-width="4"/><text x="32" y="46" text-anchor="middle" font-family="Fredoka, Arial Black" font-weight="700" font-size="40" fill="#fff" stroke="#14081f" stroke-width="3" paint-order="stroke">$</text></svg>',
   index: '<svg viewBox="0 0 64 64"><path d="M10 14a6 6 0 0 1 6-6h38v44H16a6 6 0 0 0-6 6z" fill="#2f8cff" stroke="#14081f" stroke-width="4" stroke-linejoin="round"/><path d="M10 58a6 6 0 0 1 6-6h38v6z" fill="#fff" stroke="#14081f" stroke-width="4" stroke-linejoin="round"/><path d="M22 20h22M22 28h16" stroke="#cfe6ff" stroke-width="4" stroke-linecap="round"/></svg>',
+  settings: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#8a7bff" stroke="#14081f" stroke-width="4"/><path d="M32 12l4 6 7-2 1 7 7 2-3 6 3 6-7 2-1 7-7-2-4 6-4-6-7 2-1-7-7-2 3-6-3-6 7-2 1-7 7 2z" fill="#fff" stroke="#14081f" stroke-width="3" stroke-linejoin="round"/><circle cx="32" cy="32" r="7" fill="#8a7bff" stroke="#14081f" stroke-width="3"/></svg>',
   guide: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#ff9a1f" stroke="#14081f" stroke-width="4"/><text x="32" y="45" text-anchor="middle" font-family="Fredoka, Arial Black" font-weight="700" font-size="36" fill="#fff" stroke="#14081f" stroke-width="3" paint-order="stroke">?</text></svg>',
 }
 
@@ -81,6 +83,7 @@ export function createHud(actions) {
     rebirthBtn,
     giftBtn,
     button('side guide', `<span class="ico">${ICON.guide}</span><span class="lbl">Guide</span>`, actions.onGuide),
+    button('side settings', `<span class="ico">${ICON.settings}</span><span class="lbl">Settings</span>`, actions.onSettings),
   )
   root.appendChild(left)
 
@@ -351,7 +354,7 @@ function row({ thumb, name, nameColor = '#ffffff', lines = [], button: btn }) {
   }
   r.appendChild(info)
   if (btn) {
-    const b = button(`prow-btn ${btn.disabled ? 'off' : ''}`, btn.label, () => btn.onClick(b))
+    const b = button(`prow-btn ${btn.cls ?? ''} ${btn.disabled ? 'off' : ''}`, btn.label, () => btn.onClick(b))
     if (btn.color) b.style.setProperty('--btn', btn.color)
     r.appendChild(b)
   }

@@ -171,7 +171,7 @@ export const CAMERA = {
 // SDK setting keys this game listens for; registering a listener makes the control
 // appear in the portal's settings menu.
 export const SETTINGS = {
-  master_volume: { def: '80', type: 'number', min: 0, max: 100 }, // all sound (sfx.js, mix in AUDIO); the game has no music
+  master_volume: { def: '80', type: 'number', min: 0, max: 100 }, // all sound: effects (sfx.js, AUDIO) and music (music.js, MUSIC); the in-game Settings window switches each off
   graphics_quality: { def: DEFAULT_GRAPHICS, type: 'enum', values: ['Low', 'Medium', 'High', 'Ultra'] },
   camera_sensitivity: { def: '1', type: 'number', min: 0.1, max: 5 },
   show_fps: { def: 'false', type: 'bool' },
@@ -542,6 +542,26 @@ export const AUDIO = {
   car: { refDistance: 5, rolloff: 1.3, maxDistance: 140, sirenGain: 0.55, engineGain: 0.22 },
   radio: { every: [8, 18], range: 45 }, // s between police radio calls from the nearest cruiser (m in range)
   birds: { every: [2.5, 7] }, // s between bird calls in the hub
+  voices: { desktop: 110, mobile: 60 }, // max one-shot oscillators/noises at once (more are dropped)
+}
+
+// Background music (heist/music.js): an original spy-jazz score synthesised live, D minor, an 8-bar
+// loop (Dm, DmMaj7, Dm7, Dm6, Bbmaj7, A7b9, Dm, A7). It plays one of five arrangements and steps up
+// with the Jail Chance: lounge in the hub, stealth on the heist bank, tension, chase (the siren
+// level), climax (a semitone up). Layers crossfade and the tempo glides at the next beat.
+export const MUSIC = {
+  level: 0.34, // music bus at full master volume
+  reverb: 0.35, // send into the shared room tail
+  tonic: 50, // MIDI note of the key's root for the riff register (D3)
+  heat: { tension: 35, chase: JAIL.sirenAt, climax: 90 }, // Jail Chance % where each section starts
+  // per section: tempo, swing (0..0.66 of a 16th on the off-beat 8ths), semitone shift and layer levels
+  sections: {
+    lounge: { bpm: 96, swing: 0.6, shift: 0, bass: 0.8, guitar: 0, vibes: 0.9, lead: 0, brass: 0, strings: 0.25, drums: 0.7 },
+    stealth: { bpm: 112, swing: 0.35, shift: 0, bass: 0.9, guitar: 0.85, vibes: 0.25, lead: 0, brass: 0, strings: 0.2, drums: 0.75 },
+    tension: { bpm: 126, swing: 0, shift: 0, bass: 1, guitar: 0.9, vibes: 0, lead: 0.7, brass: 0.6, strings: 0.45, drums: 0.9 },
+    chase: { bpm: 146, swing: 0, shift: 0, bass: 1, guitar: 0.8, vibes: 0, lead: 0.9, brass: 0.85, strings: 0.7, drums: 1 },
+    climax: { bpm: 156, swing: 0, shift: 1, bass: 1, guitar: 0.85, vibes: 0, lead: 1, brass: 1, strings: 0.85, drums: 1 },
+  },
 }
 
 // Cash-priced boosts on the right of the HUD ("slightly high" cash prices).
@@ -591,6 +611,7 @@ export const NET = {
   remoteRangeSlack: 10, // m of hysteresis: a drawn player disappears only beyond range + slack
   remoteNameHeight: 0.55, // m above the character's head for the name tag
   saveEvery: 8, // s: at most one save to the server per this (the local copy is written every ~6 s)
+  rejoinSeconds: 15, // s a dropped connection keeps trying to resume its session (the server holds it 20 s)
   retryMax: 15, // s: the longest wait between connection attempts (they back off 1, 2, 4, 8, 15, ...)
   giveUpAfter: 60, // s of failed attempts before pausing (a cold server can take ~45 s to wake)
   retryPause: 30, // s to wait before starting the attempts over

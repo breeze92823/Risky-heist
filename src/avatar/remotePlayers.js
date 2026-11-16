@@ -87,7 +87,7 @@ class Remote {
     this.avatar = next
     this.group.add(next)
     this.animator = makeAnimator(next)
-    this.emotes.setAvatar(next)
+    this.emotes.setAvatar(next, this.animator)
   }
 
   // Rebuilds the character in `json`'s look (a stale load never lands: only the newest one counts).
@@ -181,7 +181,7 @@ class Remote {
     // body: zipline hang (+ trolley on the cable), door swing, loot held overhead
     if (p.swing && this.swingT <= 0) this.swingT = HIT_INTERVAL
     this.swingT = Math.max(0, this.swingT - dt)
-    applyArmPose(this.animator?.rig, { ride: p.riding, swing: swingAmount(this.swingT), holding: !!p.carry })
+    applyArmPose(this.animator?.rig, { ride: p.riding, swing: swingAmount(this.swingT), holding: !!p.carry && !this.emotes.playing })
     this.trolley.visible = p.riding
     this.trolley.rotation.y = -this.yaw // the cable runs along the world axes, not with the rider's facing
     this.setCarry(p.carry)

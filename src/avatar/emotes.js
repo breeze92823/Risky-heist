@@ -75,6 +75,9 @@ export function createEmotePlayer() {
   let want = '' // the id asked for ('' = none)
   let current = null // { id, clip, t, tracks: [{ bone, rest, keys }] }
   let avatar = null
+  let full = false // the avatar is the full standard rig (player.glb)
+  let rigRests = new Map() // bone -> bind quaternion, for the bones the animator drives
+  const warned = new Set()
   const rests = new WeakMap() // bone -> its bind quaternion, captured before we ever touch it
   const euler = new Euler()
   const q = new Quaternion()
@@ -100,15 +103,34 @@ export function createEmotePlayer() {
     begin(emote.clip, id)
   }
 
+  // The bind quaternion of a bone: the animator's rig knows it for the bones it drives (their current
+  // quaternion is an animated pose, never the bind); every other bone sits at bind until an emote
+  // touches it, so the first read is the bind (and clear() always puts it back).
+  function restOf(bone) {
+    const rig = rigRests.get(bone)
+    if (rig) return rig
+    if (!rests.has(bone)) rests.set(bone, bone.quaternion.clone())
+    return rests.get(bone)
+  }
+
   function begin(clip, id) {
     clear()
     if (!avatar?.nodes) return
     const tracks = []
     for (const [name, keys] of Object.entries(clip.tracks)) {
+      // By bone name: the catalogue's bones (the 12 it uses: Neck1, Spine1, Arm*_Offset, Arm*1, Arm*2,
+      // Leg*1, Leg*2) are all on player.glb, and the stand-in character has the same names except the
+      // elbows and knees, which are skipped. A bone missing from a FULL rig is worth a warning.
       const bone = avatar.nodes[name]
-      if (!bone || !Array.isArray(keys) || !keys.length) continue
-      if (!rests.has(bone)) rests.set(bone, bone.quaternion.clone())
-      tracks.push({ bone, rest: rests.get(bone), keys })
+      if (!bone) {
+        if (full && !warned.has(name)) {
+          warned.add(name)
+          console.warn(`[emotes] the rig has no bone "${name}"; its track is skipped`)
+        }
+        continue
+      }
+      if (!Array.isArray(keys) || !keys.length) continue
+      tracks.push({ bone, rest: restOf(bone), keys })
     }
     if (tracks.length) {
       current = { id, clip, t: 0, tracks }
@@ -141,12 +163,20 @@ export function createEmotePlayer() {
       want = ''
       stop()
     },
-    // The avatar was rebuilt (sign-in, customizer edit): its bones are new objects.
-    setAvatar(next) {
+    // The avatar was rebuilt (sign-in, customizer edit): its bones are new objects. `animator` is the
+    // one driving it (its rig holds the bind pose of the bones it animates).
+    setAvatar(next, animator) {
       const was = current?.id
       avatar = next
+      full = !!next?.nodes?.ArmR2 // the full rig (player.glb) has elbows; the stand-in character does not
+      rigRests = new Map((animator?.rig?.bindings ?? []).map((b) => [b.bone, b.rest]))
       current = null
       if (was) notify('')
+    },
+    // Plays a clip directly ({ len, loop, tracks }): for tests and tools.
+    playClip(id, clip) {
+      want = id
+      begin(clip, id)
     },
     // After the animator wrote this frame's pose. `speed` = horizontal m/s, `grounded` = on the floor.
     update(dt, speed, grounded) {
