@@ -2,7 +2,7 @@
 // here may throw when the SDK is missing: a blocked sdk.bloxity.io leaves the
 // game fully playable on the default avatar and keyboard controls.
 // Docs: https://docs.bloxity.io/#html5
-import { GAME_SLUG, GAME_TITLE, SETTINGS, DEV_MODE, coerceSetting } from './config.js'
+import { GAME_SLUG, GAME_TITLE, SETTINGS, DEV_MODE, coerceSetting, LEADERBOARDS, AD_SCREENS } from './config.js'
 
 export function sdk() {
   if (DEV_MODE) return null
@@ -24,6 +24,8 @@ const proportionListeners = new Set()
 const authListeners = new Set()
 const settingListeners = new Set()
 const respawnListeners = new Set()
+const emoteListeners = new Set()
+const chatListeners = new Set()
 const unsubscribers = []
 
 function emit(listeners, ...args) {
@@ -60,6 +62,17 @@ export function onSetting(fn) {
 export function onRespawnRequest(fn) {
   respawnListeners.add(fn)
   return () => respawnListeners.delete(fn)
+}
+
+// The player picked an emote in the portal's emote wheel (fn(id)), or took it off (fn('')).
+export function onEmote(fn) {
+  emoteListeners.add(fn)
+  return () => emoteListeners.delete(fn)
+}
+// A chat message anyone in the game sent (fn(m): { userId, username, text, isGif, at, isLocalPlayer }).
+export function onChat(fn) {
+  chatListeners.add(fn)
+  return () => chatListeners.delete(fn)
 }
 
 // --- Auth ---------------------------------------------------------------
@@ -106,19 +119,44 @@ export function displayName() {
   return sdk() ? 'Guest' : 'Offline'
 }
 
+// --- Environment ----------------------------------------------------------
+// Bloxity runs in prod, stage and local environments; the platform tells the game which one, so
+// every URL comes from the SDK (never detected from the hostname, never hardcoded). '' = the SDK
+// is absent (dev mode / blocked) or too old to say: callers skip what needs the URL.
+export function environment() {
+  try {
+    return sdk()?.environment?.() ?? null
+  } catch {
+    return null
+  }
+}
+export const apiUrl = () => environment()?.apiUrl || ''
+export const staticUrl = () => environment()?.staticUrl || ''
+const envListeners = new Set()
+// fn() when the platform switches environment: anything cached from an API / CDN is stale then.
+export function onEnvironment(fn) {
+  envListeners.add(fn)
+  return () => envListeners.delete(fn)
+}
+
+// The player's Bloxity token (`Legion.SDK.auth.getToken()`): the server verifies it with Bloxity
+// and uses only the account id Bloxity returns. '' for a guest / no SDK.
+export function getToken() {
+  try {
+    const t = sdk()?.auth?.getToken?.()
+    return typeof t === 'string' ? t : ''
+  } catch {
+    return ''
+  }
+}
+
 // The player's Bloxity profile picture (user, else the guest's derived one) as an absolute
 // http(s) URL, '' when there is none. Relative paths resolve against the CDN (staticUrl).
 export function getPfp() {
   const raw = authState.user?.pfp || authState.guest?.pfp
   if (typeof raw !== 'string' || !raw) return ''
   try {
-    let base = 'https://static.bloxity.io'
-    try {
-      base = sdk()?.environment?.()?.staticUrl || base
-    } catch {
-      // Older SDK builds have no environment().
-    }
-    const url = new URL(raw, base)
+    const url = new URL(raw, staticUrl() || undefined)
     return /^https?:$/.test(url.protocol) ? url.href : ''
   } catch {
     return ''
@@ -142,9 +180,18 @@ export function init() {
   }
 
   try {
-    const onLocalhost = /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)
-    SDK.init(onLocalhost ? { gameSlug: GAME_SLUG, portalUrl: 'https://bloxity.io' } : { gameSlug: GAME_SLUG })
+    // One build for every environment: the SDK itself works out where it runs (never the hostname).
+    const ready = Promise.resolve(SDK.init({ gameSlug: GAME_SLUG }))
     SDK.game.loadingStep(`Loading ${GAME_TITLE}`)
+    if (typeof SDK.onEnvironmentChanged === 'function') unsubscribers.push(SDK.onEnvironmentChanged(() => emit(envListeners)))
+    // Features are announced once the SDK is initialised: the portal then shows the emote button.
+    ready.then(
+      () => registerFeature('emotes'),
+      () => {},
+    )
+    defineLeaderboards(LEADERBOARDS)
+    declareAdScreens()
+    watchAdBreaks()
 
     for (const key of Object.keys(SETTINGS)) {
       const off = SDK.settings.listen(key, (raw) => {
@@ -178,10 +225,13 @@ export function init() {
     }
 
     unsubscribers.push(
-      SDK.player.onEvent((event) => {
+      SDK.player.onEvent((event, data) => {
         if (event === 'respawn_request') emit(respawnListeners)
+        else if (event === 'play_emote') emit(emoteListeners, typeof data === 'string' ? data : '')
+        else if (event === 'stop_emote') emit(emoteListeners, '')
       }),
     )
+    if (typeof SDK.chat?.onMessage === 'function') unsubscribers.push(SDK.chat.onMessage((m) => emit(chatListeners, m)))
 
     SDK.game.loadingStep('Building the island')
   } catch (err) {
@@ -369,6 +419,160 @@ function estimatedReservedAreas(w, h) {
     { id: 'toolbar', left: 0, top: 0, width: Math.min(w, w < 480 ? w : 330), height: toolbarHeight },
     { id: 'chat', left: 0, top: toolbarHeight, width: Math.round(chatWidth + 8), height: compact ? 140 : 180 },
   ]
+}
+
+// --- Features, lifecycle, rooms -------------------------------------------
+// Tells the portal which optional features this game supports ('emotes' shows the emote button).
+export function registerFeature(name) {
+  try {
+    sdk()?.game?.registerFeature?.(name)
+  } catch {
+    // Ignore.
+  }
+}
+// A player joined / is already in this room: the portal toasts it to their friends.
+export function playerJoined(username) {
+  try {
+    if (username) sdk()?.game?.playerJoined?.(username)
+  } catch {
+    // Ignore.
+  }
+}
+export function playerInRoom(username) {
+  try {
+    if (username) sdk()?.game?.playerInRoom?.(username)
+  } catch {
+    // Ignore.
+  }
+}
+// Real play started / stopped (analytics): around the time the player is actually in the game.
+export function gameplayStart() {
+  try {
+    sdk()?.game?.gameplayStart?.()
+  } catch {
+    // Ignore.
+  }
+}
+export function gameplayEnd() {
+  try {
+    sdk()?.game?.gameplayEnd?.()
+  } catch {
+    // Ignore.
+  }
+}
+
+// --- Leaderboards -----------------------------------------------------------
+// Declares the boards once after init (ids are permanent; later changes are ignored). Scores are
+// reported by the game server (a hosted game never submits from the client): see the backend's bloxity.ts.
+export function defineLeaderboards(boards) {
+  try {
+    sdk()?.leaderboard?.define?.(boards)
+  } catch (err) {
+    console.warn('[bloxity] leaderboard.define failed', err)
+  }
+}
+
+// --- Ads ----------------------------------------------------------------------
+const breakListeners = new Set()
+// fn(true) when an ad break starts (pause the game and mute), fn(false) when it ends.
+export function onAdBreak(fn) {
+  breakListeners.add(fn)
+  return () => breakListeners.delete(fn)
+}
+function watchAdBreaks() {
+  try {
+    const ads = sdk()?.ads
+    if (!ads) return
+    if (typeof ads.onBreakStart === 'function') unsubscribers.push(ads.onBreakStart(() => emit(breakListeners, true)))
+    if (typeof ads.onBreakEnd === 'function') unsubscribers.push(ads.onBreakEnd(() => emit(breakListeners, false)))
+  } catch {
+    // Ignore.
+  }
+}
+// Lists every screen this game has (gameplay is always listed; its banners stay off unless opted in).
+function declareAdScreens() {
+  try {
+    sdk()?.ads?.declareScreens?.(AD_SCREENS)
+  } catch (err) {
+    console.warn('[bloxity] ads.declareScreens failed', err)
+  }
+}
+let screenAd = null
+// A screen opened (menu / lobby / results / panel / gameplay): Boxity shows its banners around it.
+export function showAdScreen(type, opts) {
+  try {
+    screenAd = sdk()?.ads?.screen?.(type, opts) ?? null
+  } catch {
+    screenAd = null
+  }
+}
+export function hideAdScreen() {
+  try {
+    if (screenAd?.hide) screenAd.hide()
+    else sdk()?.ads?.hideScreen?.()
+  } catch {
+    // Ignore.
+  }
+  screenAd = null
+}
+export function adsAvailable() {
+  try {
+    return !!sdk()?.ads?.isAvailable?.()
+  } catch {
+    return false
+  }
+}
+// Plays a rewarded ad: { status ('completed' = grant it), rewardToken?, reason? }. Never rejects.
+export async function showRewardedAd(placement) {
+  try {
+    return (await sdk().ads.showRewarded(placement)) ?? { status: 'error' }
+  } catch (err) {
+    return { status: 'error', reason: String(err?.message ?? err) }
+  }
+}
+
+// --- Death screen -------------------------------------------------------------
+// Boxity's own death screen (ads + a countdown the Respawn button waits for). The handle has
+// onCountdown(fn) and respawn() (true once the countdown ran out); null without the SDK, then the
+// game just respawns on its own timer.
+export function showDeathScreen() {
+  try {
+    return sdk()?.deathScreen?.show?.() ?? null
+  } catch {
+    return null
+  }
+}
+export function hideDeathScreen() {
+  try {
+    sdk()?.deathScreen?.hide?.()
+  } catch {
+    // Ignore.
+  }
+}
+
+// --- Chat bubbles ---------------------------------------------------------------
+export const chatBubbleSeconds = () => {
+  try {
+    return Number(sdk()?.chat?.bubbleSeconds) || 4
+  } catch {
+    return 4
+  }
+}
+// The text a bubble shows for a message (GIFs read as a label).
+export function bubbleText(m) {
+  try {
+    return String(sdk()?.chat?.bubbleText?.(m) ?? m?.text ?? '')
+  } catch {
+    return String(m?.text ?? '')
+  }
+}
+// A bubble above `root` (three.js), or null; the returned object has remove().
+export function attachBubble(THREE, root, text) {
+  try {
+    return sdk()?.chat?.attachBubble?.(THREE, root, text) ?? null
+  } catch {
+    return null
+  }
 }
 
 export function requestFullscreen(on) {

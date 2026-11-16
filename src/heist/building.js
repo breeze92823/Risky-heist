@@ -17,6 +17,7 @@ import { world } from '../physics.js'
 import { mulberry32 } from '../textures.js'
 import { boxGeo, boxMM, bricks, canvasSign, emissive, glass, glowSprite, groundDecal, infoLabel, metal, money, outlinedText, plainTex, raysTexture, ringTexture, roundRect, solid, solidCuboid, solidMM, studs } from './kit.js'
 import { makeTreasure } from './models.js'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { paintCloverSign, paintDoor } from './paint.js'
 
 const H = B.floorH
@@ -59,34 +60,42 @@ export function buildBuilding(scene, { fx, sfx }) {
 
   // --- Wall builders (with window/door openings) ----------------------------------
   // Wall running along x (front/back), thickness between zA..zB.
+  // Visual pieces go round every opening; colliders only split at doors (a window is
+  // solid glass), so each wall costs a handful of colliders instead of dozens.
+  function wallColliders(along, a0, a1, b0, b1, y0, y1, openings) {
+    const box = (u0, v0, u1, v1) => (along === 'x' ? S(u0, v0, b0, u1, v1, b1) : S(b0, v0, u0, b1, v1, u1))
+    let cur = a0
+    for (const o of openings.filter((q) => !q.window).sort((p, q) => p.a - q.a)) {
+      if (o.a > cur) box(cur, y0, o.a, y1)
+      if (o.y1 < y1) box(o.a, o.y1, o.b, y1)
+      cur = o.b
+    }
+    if (cur < a1) box(cur, y0, a1, y1)
+  }
   function wallX(zA, zB, xFrom, xTo, y0, y1, openings, mat = wallMat) {
     let cur = xFrom
     for (const o of [...openings].sort((a, b) => a.a - b.a)) {
-      if (o.a > cur) R(root, cur, y0, zA, o.a, y1, zB, mat, { collide: true })
-      if (o.y0 > y0) R(root, o.a, y0, zA, o.b, o.y0, zB, mat, { collide: true })
-      if (o.y1 < y1) R(root, o.a, o.y1, zA, o.b, y1, zB, mat, { collide: true })
-      if (o.window) {
-        S(o.a, o.y0, zA, o.b, o.y1, zB)
-        windowX((o.a + o.b) / 2, (zA + zB) / 2, o.b - o.a, o.y0, o.y1, Math.sign(zA + zB))
-      }
+      if (o.a > cur) R(root, cur, y0, zA, o.a, y1, zB, mat)
+      if (o.y0 > y0) R(root, o.a, y0, zA, o.b, o.y0, zB, mat)
+      if (o.y1 < y1) R(root, o.a, o.y1, zA, o.b, y1, zB, mat)
+      if (o.window) windowX((o.a + o.b) / 2, (zA + zB) / 2, o.b - o.a, o.y0, o.y1, Math.sign(zA + zB))
       cur = o.b
     }
-    if (cur < xTo) R(root, cur, y0, zA, xTo, y1, zB, mat, { collide: true })
+    if (cur < xTo) R(root, cur, y0, zA, xTo, y1, zB, mat)
+    wallColliders('x', xFrom, xTo, zA, zB, y0, y1, openings)
   }
   // Wall running along z (sides), thickness between xA..xB.
   function wallZ(xA, xB, zFrom, zTo, y0, y1, openings, mat = wallMat) {
     let cur = zFrom
     for (const o of [...openings].sort((a, b) => a.a - b.a)) {
-      if (o.a > cur) R(root, xA, y0, cur, xB, y1, o.a, mat, { collide: true })
-      if (o.y0 > y0) R(root, xA, y0, o.a, xB, o.y0, o.b, mat, { collide: true })
-      if (o.y1 < y1) R(root, xA, o.y1, o.a, xB, y1, o.b, mat, { collide: true })
-      if (o.window) {
-        S(xA, o.y0, o.a, xB, o.y1, o.b)
-        windowZ((xA + xB) / 2, (o.a + o.b) / 2, o.b - o.a, o.y0, o.y1, Math.sign(xA + xB))
-      }
+      if (o.a > cur) R(root, xA, y0, cur, xB, y1, o.a, mat)
+      if (o.y0 > y0) R(root, xA, y0, o.a, xB, o.y0, o.b, mat)
+      if (o.y1 < y1) R(root, xA, o.y1, o.a, xB, y1, o.b, mat)
+      if (o.window) windowZ((xA + xB) / 2, (o.a + o.b) / 2, o.b - o.a, o.y0, o.y1, Math.sign(xA + xB))
       cur = o.b
     }
-    if (cur < zTo) R(root, xA, y0, cur, xB, y1, zTo, mat, { collide: true })
+    if (cur < zTo) R(root, xA, y0, cur, xB, y1, zTo, mat)
+    wallColliders('z', zFrom, zTo, xA, xB, y0, y1, openings)
   }
   const T = B.wall + 0.16 // frame depth
   function windowX(xc, zc, w, y0, y1, out) {
@@ -284,6 +293,7 @@ export function buildBuilding(scene, { fx, sfx }) {
       knob.position.set(sx * 0.18, B.doorH * 0.48, B.doorW * 0.36)
       g.add(knob)
     }
+    g.visible = false
     live.add(g)
     const hp = FLOORS[floorIndex].doorHP
     const bar = canvasSign(2.4, 0.6, 256, 64, () => {})
@@ -291,6 +301,7 @@ export function buildBuilding(scene, { fx, sfx }) {
     bar.mesh.material.transparent = true
     bar.mesh.position.copy(W(x + side * 0.3, y + B.doorH + 0.75, VEST_DOOR_Z))
     bar.mesh.rotation.y = side * Math.PI / 2
+    bar.mesh.visible = false
     live.add(bar.mesh)
     const back = bar.mesh.clone()
     back.rotation.y = -side * Math.PI / 2
@@ -334,32 +345,30 @@ export function buildBuilding(scene, { fx, sfx }) {
     door.barBack.material = door.bar.mesh.material
   }
 
+  const glassFrameMat = metal('#2d3140', 0.4)
+  const glassPaneMat = glass('#bfeaff', 0.42)
   function makeGlassDoor(floorIndex, x, y, width, double) {
     const g = new Group()
     g.position.copy(W(x, y, ID + B.wall / 2))
-    const frame = metal('#2d3140', 0.4)
     const panes = []
     const leaves = double ? [-width / 4, width / 4] : [0]
     const lw = double ? width / 2 : width
+    const parts = []
+    const piece = (w, h, d, px, py, pz) => parts.push(boxGeo(w, h, d).translate(px, py, pz))
     for (const lx of leaves) {
-      const f = new Group()
-      f.position.x = lx
-      const add = (w, h, d, px, py, pz, m) => {
-        const mesh = new Mesh(boxGeo(w, h, d), m)
-        mesh.position.set(px, py, pz)
-        mesh.castShadow = m !== winGlass
-        f.add(mesh)
-        return mesh
-      }
-      add(lw, 0.12, 0.16, 0, 0.06, 0, frame)
-      add(lw, 0.12, 0.16, 0, B.doorH - 0.06, 0, frame)
-      add(0.12, B.doorH, 0.16, -lw / 2 + 0.06, B.doorH / 2, 0, frame)
-      add(0.12, B.doorH, 0.16, lw / 2 - 0.06, B.doorH / 2, 0, frame)
-      const pane = add(lw - 0.2, B.doorH - 0.2, 0.05, 0, B.doorH / 2, 0, glass('#bfeaff', 0.42))
-      const push = add(lw * 0.6, 0.08, 0.12, 0, B.doorH * 0.48, 0.1, metal('#d6dbe4', 0.25))
-      panes.push(pane, push)
-      g.add(f)
+      piece(lw, 0.12, 0.16, lx, 0.06, 0)
+      piece(lw, 0.12, 0.16, lx, B.doorH - 0.06, 0)
+      piece(0.12, B.doorH, 0.16, lx - lw / 2 + 0.06, B.doorH / 2, 0)
+      piece(0.12, B.doorH, 0.16, lx + lw / 2 - 0.06, B.doorH / 2, 0)
+      piece(lw * 0.6, 0.08, 0.12, lx, B.doorH * 0.48, 0.1)
+      const pane = new Mesh(boxGeo(lw - 0.2, B.doorH - 0.2, 0.05), glassPaneMat)
+      pane.position.set(lx, B.doorH / 2, 0)
+      g.add(pane)
+      panes.push(pane)
     }
+    const frame = new Mesh(mergeGeometries(parts), glassFrameMat)
+    frame.castShadow = true
+    g.add(frame)
     live.add(g)
     const door = {
       kind: 'glass',
@@ -369,7 +378,7 @@ export function buildBuilding(scene, { fx, sfx }) {
       broken: false,
       collider: null,
       colliderDesc: [OX + x - width / 2, y, OZ + ID, OX + x + width / 2, y + B.doorH, OZ + B.halfD],
-      at: W(x, y, floorIndex === 0 ? B.halfD + 1.2 : ID - 1.0), // ground: from outside; upper floors: from inside
+      at: W(x, y, B.halfD - B.wall / 2), // in the door plane: reachable from inside and from the balcony
       center: W(x, y + B.doorH / 2, B.halfD - B.wall / 2),
     }
     doors.push(door)
@@ -406,6 +415,7 @@ export function buildBuilding(scene, { fx, sfx }) {
     R(root, px - 0.6, fy + 2.0, pz - 0.05, px + 0.6, fy + 2.4, pz + 0.05, solid('#ffcc22', 0.5))
     const pad = groundDecal(ringTexture(), '#33c9ff', 2.6, 0.85)
     pad.position.copy(W(B.exitX, fy + 0.03, bz0 + 1.5))
+    pad.visible = false
     live.add(pad)
     floors[i].anchor = {
       top: W(px, fy + 5.1, pz + 0.8),
@@ -415,19 +425,13 @@ export function buildBuilding(scene, { fx, sfx }) {
   }
 
   // --- Interiors ---------------------------------------------------------------------------------
+  const artMats = []
   for (const f of floors) furnish(f)
 
   function furnish(f) {
     const { i, fy } = f
     const add = (x0, y0, z0, x1, y1, z1, m, collide = false) => R(root, x0, fy + y0, z0, x1, fy + y1, z1, m, { collide })
-    // clover luck sign on the back wall
-    const sign = paintCloverSign(f.theme.luckSign)
-    const signMesh = new Mesh(new PlaneGeometry(4.6, 2.3), new MeshStandardMaterial({ map: plainTex(sign.canvas), emissive: '#ffffff', emissiveMap: plainTex(sign.canvas), emissiveIntensity: 0.35 }))
-    signMesh.position.copy(W(0, fy + 3.1, -ID + 0.05))
-    live.add(signMesh)
-    const plate = infoLabel([{ text: `Floor ${i + 1}`, size: 44, color: '#ffe14d' }, { text: f.theme.name, size: 34, color: '#ffffff' }], 0.016)
-    plate.position.copy(W(0, fy + 4.55, -ID + 0.4))
-    live.add(plate)
+    const th = f.theme.theme
     const wood = solid('#8a4a22', 0.6)
     const dark = solid('#2b2440', 0.6)
     const plant = (x, z) => {
@@ -435,7 +439,7 @@ export function buildBuilding(scene, { fx, sfx }) {
       add(x - 0.6, 0.8, z - 0.6, x + 0.6, 1.9, z + 0.6, solid('#3fbf2a', 0.85))
       add(x - 0.35, 1.9, z - 0.35, x + 0.35, 2.5, z + 0.35, solid('#55d633', 0.85))
     }
-    if (i === 0) {
+    if (th === 0) {
       // reception desk (back left), sofa + table (front right), plants, vending machine
       add(-9.5, 0, -8.6, -4.5, 1.1, -7.4, wood, true)
       add(-9.6, 1.1, -8.7, -4.4, 1.2, -7.3, solid('#f2efe8', 0.25))
@@ -447,7 +451,7 @@ export function buildBuilding(scene, { fx, sfx }) {
       plant(9.2, -9.2)
       add(4.5, 0, -10.3, 6.3, 3.0, -9.3, solid('#2c6bff', 0.4), true)
       add(4.7, 1.2, -9.3, 6.1, 2.7, -9.25, emissive('#9fe8ff', 1.2, '#103040'))
-    } else if (i === 1) {
+    } else if (th === 1) {
       for (const [dx, dz] of [[-8.5, 8.4], [-2.8, 8.4], [8.5, -8.6]]) {
         add(dx - 1.6, 0.9, dz - 0.8, dx + 1.6, 1.0, dz + 0.8, wood, false)
         add(dx - 1.5, 0, dz - 0.7, dx - 1.3, 0.9, dz + 0.7, dark, true)
@@ -460,7 +464,7 @@ export function buildBuilding(scene, { fx, sfx }) {
       for (const fx of [-3.4, -2.5]) add(fx - 0.45, 0, -10.3, fx + 0.45, 1.8, -9.5, metal('#9aa1ad', 0.5), true)
       add(9.0, 0, 8.6, 9.8, 1.4, 9.4, solid('#e8f2ff', 0.3), true)
       add(9.1, 1.4, 8.7, 9.7, 2.1, 9.3, glass('#7fd0ff', 0.6))
-    } else if (i === 2) {
+    } else if (th === 2) {
       // safe-deposit walls + a round vault door on the back wall, leather sofa
       const steel = metal('#b8bfcc', 0.35)
       for (const side of [-1, 1]) {
@@ -472,25 +476,29 @@ export function buildBuilding(scene, { fx, sfx }) {
       add(-9.6, 0.6, 9.2, -6.4, 1.3, 9.8, solid('#3a2014', 0.5))
       add(-5.6, 0, 8.6, -1.6, 1.0, 9.6, metal('#ffc531', 0.3), true) // gold bar shelf
       for (let k = 0; k < 5; k++) add(-5.3 + k * 0.76, 1.0, 8.8, -4.7 + k * 0.76, 1.25, 9.4, metal('#ffc531', 0.2))
-    } else if (i === 3) {
+    } else if (th === 3) {
       // gallery: paintings on the back wall, rope stanchions, a statue
       const colors = ['#ff4d6d', '#38c6ff', '#ffd23a', '#59ff8a', '#b46bff']
       for (const [px, pw] of [[-7, 3], [7, 3]]) {
         add(px - pw / 2 - 0.15, 1.6, -10.4, px + pw / 2 + 0.15, 4.0, -10.25, solid('#d9a520', 0.35, 0.8))
-        const c = document.createElement('canvas')
-        c.width = c.height = 128
-        const ctx = c.getContext('2d')
-        ctx.fillStyle = colors[(px > 0) | 0]
-        ctx.fillRect(0, 0, 128, 128)
-        for (let k = 0; k < 8; k++) {
+        const k = ((px > 0) | 0) + (i % 3) * 2
+        if (!artMats[k]) {
+          const c = document.createElement('canvas')
+          c.width = c.height = 128
+          const ctx = c.getContext('2d')
           ctx.fillStyle = colors[k % 5]
-          ctx.beginPath()
-          ctx.arc(rand() * 128, rand() * 128, 10 + rand() * 30, 0, Math.PI * 2)
-          ctx.fill()
+          ctx.fillRect(0, 0, 128, 128)
+          for (let q = 0; q < 8; q++) {
+            ctx.fillStyle = colors[(q + k) % 5]
+            ctx.beginPath()
+            ctx.arc(rand() * 128, rand() * 128, 10 + rand() * 30, 0, Math.PI * 2)
+            ctx.fill()
+          }
+          artMats[k] = new MeshStandardMaterial({ map: plainTex(c), roughness: 0.8 })
         }
-        const art = new Mesh(new PlaneGeometry(pw, 2.1), new MeshStandardMaterial({ map: plainTex(c), roughness: 0.8 }))
+        const art = new Mesh(new PlaneGeometry(pw, 2.1), artMats[k])
         art.position.copy(W(px, fy + 2.8, -10.22))
-        live.add(art)
+        root.add(art)
       }
       for (const [sx, sz] of [[-10.2, 7], [-6.2, 7], [6.2, 7], [10.2, 7]]) {
         add(sx - 0.12, 0, sz - 0.12, sx + 0.12, 1.0, sz + 0.12, metal('#d9a520', 0.3))
@@ -520,18 +528,11 @@ export function buildBuilding(scene, { fx, sfx }) {
       const ringMesh = new Mesh(boxGeo(2.8, 0.12, 2.8), metal('#ffc531', 0.3))
       ringMesh.position.y = 0.3
       chand.add(ringMesh)
-      live.add(chand)
+      root.add(chand)
     }
-    // treasure spots
+    // treasure spots (data only: visuals are built while the floor is live)
     B.spots.forEach(([sx, sz], j) => {
-      const holder = new Group()
-      holder.position.copy(W(sx, fy, sz))
-      live.add(holder)
-      const disc = new Mesh(boxGeo(1.9, 0.1, 1.9), solid('#ffffff', 0.4))
-      disc.position.y = 0.05
-      disc.receiveShadow = true
-      holder.add(disc)
-      f.spots.push({ floor: i, index: j, holder, disc, at: holder.position.clone(), item: null, model: null, label: null, rays: null, glow: null, spin: rand() * 6 })
+      f.spots.push({ floor: i, index: j, at: W(sx, fy, sz), item: null, holder: null, model: null, spin: rand() * 6 })
     })
   }
 
@@ -551,21 +552,22 @@ export function buildBuilding(scene, { fx, sfx }) {
   const lamps = [new PointLight('#fff1d6', 42, 26, 1.2), new PointLight('#fff1d6', 42, 26, 1.2), new PointLight('#ffe6c4', 30, 22, 1.2)]
   for (const l of lamps) live.add(l)
 
-  // --- Treasure spots ---------------------------------------------------------------------------
-  function setSpot(spot, id) {
-    if (spot.model) {
-      spot.holder.remove(spot.model, spot.label, spot.rays, spot.glow)
-      spot.label.dispose()
-      spot.model = spot.label = spot.rays = spot.glow = null
-    }
-    spot.item = id
-    spot.disc.visible = !!id
-    if (!id) return
-    const t = TREASURE[id]
+  // --- Floor streaming ----------------------------------------------------------------------
+  // Only floors near the player keep their treasure models, labels, clover sign, door and
+  // balcony pad in the scene; the rest is plain data (a 50-floor tower stays cheap to draw).
+  const liveFloors = new Set()
+  function buildSpot(spot) {
+    if (!spot.item) return
+    const t = TREASURE[spot.item]
     const r = RARITY[t.rarity]
-    spot.model = makeTreasure(id, 1.1)
-    spot.model.position.y = 0.12
-    spot.label = infoLabel(
+    const holder = new Group()
+    holder.position.copy(spot.at)
+    const disc = new Mesh(boxGeo(1.9, 0.1, 1.9), solid(r.tier >= 3 ? r.glow : '#f4f2ff', 0.4))
+    disc.position.y = 0.05
+    disc.receiveShadow = true
+    const model = makeTreasure(spot.item, 1.1)
+    model.position.y = 0.12
+    const label = infoLabel(
       [
         { text: t.name, size: 40, color: '#ffffff' },
         { text: r.name, size: 30, color: r.color, outline: r.outline ?? '#0d0a1f' },
@@ -573,13 +575,71 @@ export function buildBuilding(scene, { fx, sfx }) {
       ],
       0.015,
     )
-    spot.label.position.y = 1.75
-    spot.rays = groundDecal(raysTexture(), r.glow, 3.6, r.tier >= 2 ? 0.9 : 0.55)
-    spot.rays.position.y = 0.12
-    spot.glow = glowSprite(r.glow, 2.4, r.tier >= 3 ? 0.65 : 0.3)
-    spot.glow.position.y = 0.7
-    spot.holder.add(spot.model, spot.label, spot.rays, spot.glow)
-    spot.disc.material = solid(r.tier >= 3 ? r.glow : '#f4f2ff', 0.4)
+    label.position.y = 1.75
+    const rays = groundDecal(raysTexture(), r.glow, 3.6, r.tier >= 2 ? 0.9 : 0.55)
+    rays.position.y = 0.12
+    const glowS = glowSprite(r.glow, 2.4, r.tier >= 3 ? 0.65 : 0.3)
+    glowS.position.y = 0.7
+    holder.add(disc, model, label, rays, glowS)
+    live.add(holder)
+    Object.assign(spot, { holder, model, label, rays, disc, glow: glowS })
+  }
+  function dropSpot(spot) {
+    if (!spot.holder) return
+    live.remove(spot.holder)
+    // the treasure model shares cached geometry/materials: only per-spot pieces are freed
+    spot.label.dispose()
+    spot.disc.geometry.dispose()
+    spot.rays.geometry.dispose()
+    spot.rays.material.dispose()
+    spot.glow.material.dispose()
+    spot.holder = spot.model = spot.label = spot.rays = spot.disc = spot.glow = null
+  }
+  function showFloor(i) {
+    const f = floors[i]
+    liveFloors.add(i)
+    for (const sp of f.spots) buildSpot(sp)
+    const sign = paintCloverSign(f.theme.luckSign)
+    const signTex = plainTex(sign.canvas)
+    const signMesh = new Mesh(new PlaneGeometry(4.6, 2.3), new MeshStandardMaterial({ map: signTex, emissive: '#ffffff', emissiveMap: signTex, emissiveIntensity: 0.35 }))
+    signMesh.position.copy(W(0, f.fy + 3.1, -ID + 0.05))
+    const plate = infoLabel([{ text: `Floor ${i + 1}`, size: 44, color: '#ffe14d' }, { text: f.theme.name, size: 34, color: '#ffffff' }], 0.016)
+    plate.position.copy(W(0, f.fy + 4.55, -ID + 0.4))
+    live.add(signMesh, plate)
+    f.decor = { signMesh, signTex, plate }
+    if (f.hpDoor) {
+      f.hpDoor.group.visible = f.hpDoor.fall < 0 || f.hpDoor.fall < 2.2
+      f.hpDoor.bar.mesh.visible = f.hpDoor.barBack.visible = !f.hpDoor.broken
+    }
+    if (f.anchor) f.anchor.pad.visible = true
+  }
+  function hideFloor(i) {
+    const f = floors[i]
+    liveFloors.delete(i)
+    for (const sp of f.spots) dropSpot(sp)
+    if (f.decor) {
+      live.remove(f.decor.signMesh, f.decor.plate)
+      f.decor.signTex.dispose()
+      f.decor.signMesh.material.dispose()
+      f.decor.signMesh.geometry.dispose()
+      f.decor.plate.dispose()
+      f.decor = null
+    }
+    if (f.hpDoor) {
+      f.hpDoor.group.visible = false
+      f.hpDoor.bar.mesh.visible = f.hpDoor.barBack.visible = false
+    }
+    if (f.anchor) f.anchor.pad.visible = false
+  }
+  function setLive(want) {
+    for (const i of [...liveFloors]) if (!want.has(i)) hideFloor(i)
+    for (const i of want) if (!liveFloors.has(i)) showFloor(i)
+  }
+
+  function setSpot(spot, id) {
+    dropSpot(spot)
+    spot.item = id
+    if (liveFloors.has(spot.floor)) buildSpot(spot)
   }
 
   // --- Door state -------------------------------------------------------------------------------
@@ -602,11 +662,11 @@ export function buildBuilding(scene, { fx, sfx }) {
       } else {
         d.hp = d.max
         d.fall = -1
-        d.group.visible = true
+        d.group.visible = liveFloors.has(d.floor)
         d.group.rotation.set(0, 0, 0)
         d.group.position.y = d.center.y - B.doorH / 2
         d.slab.position.set(0, B.doorH / 2, 0)
-        d.bar.mesh.visible = d.barBack.visible = true
+        d.bar.mesh.visible = d.barBack.visible = liveFloors.has(d.floor)
         drawBar(d)
       }
     }
@@ -670,7 +730,12 @@ export function buildBuilding(scene, { fx, sfx }) {
   }
 
   let elapsed = 0
+  const want = new Set()
+  let forced = -1 // a floor kept live on request (the zipline destination)
   return {
+    keepLive(i) {
+      forced = i
+    },
     floors,
     doors,
     setSpot,
@@ -683,8 +748,15 @@ export function buildBuilding(scene, { fx, sfx }) {
     update(dt, t, playerPos) {
       elapsed += dt
       // spin + bob treasures, rays rotate
-      for (const f of floors)
-        for (const s of f.spots) {
+      // which floors are live: the player's floor and its neighbours (ground floor from outside)
+      const fiLive = insideFloor(playerPos)
+      want.clear()
+      if (fiLive >= 0) for (let k = fiLive - 1; k <= fiLive + 1; k++) k >= 0 && k < B.floors && want.add(k)
+      else if (playerPos.y < 3) want.add(0)
+      if (forced >= 0) want.add(forced)
+      setLive(want)
+      for (const i of liveFloors)
+        for (const s of floors[i].spots) {
           if (!s.model) continue
           s.spin += dt * 0.8
           s.model.rotation.y = s.spin
@@ -713,7 +785,7 @@ export function buildBuilding(scene, { fx, sfx }) {
       lamps[1].position.copy(W(6, fy + 4.4, -2))
       lamps[2].position.copy(W(0, fy + 4.4, 6))
       beaconMat.emissiveIntensity = Math.sin(elapsed * 3) > 0.6 ? 6 : 0.4
-      for (const f of floors) if (f.anchor) f.anchor.pad.material.opacity = 0.55 + Math.sin(t * 3) * 0.3
+      for (const i of liveFloors) if (floors[i].anchor) floors[i].anchor.pad.material.opacity = 0.55 + Math.sin(t * 3) * 0.3
     },
   }
 }

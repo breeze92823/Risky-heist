@@ -1,3 +1,4 @@
+import * as THREE from 'three'
 import { ACESFilmicToneMapping, Clock, Group, PCFSoftShadowMap, PerspectiveCamera, Scene, SRGBColorSpace, WebGLRenderer } from 'three'
 import { CAMERA, graphicsPreset, RENDER } from './config.js'
 import * as bloxity from './bloxity.js'
@@ -6,10 +7,16 @@ import { installTouch } from './touch.js'
 import { createPlayerBody, interpolate as interpolatePlayer, player, resetPlayer, respawn } from './player.js'
 import { setCameraSensitivity, syncYawToPlayer, update as updateCamera } from './camera.js'
 import { onModeChanged, toggleMode } from './modes.js'
+import * as physics from './physics.js'
 import { bodyCount, initPhysics, stepPhysics } from './physics.js'
 import { createLighting } from './lighting.js'
 import { createWorld } from './world.js'
 import { createGame } from './heist/game.js'
+import { initNet, net, sendEmote, sendPose, syncAvatar } from './net.js'
+import { createRemotePlayers } from './avatar/remotePlayers.js'
+import { setVolume, setMuted } from './heist/sfx.js'
+import { setFpsVisible, tickFps } from './fps.js'
+import { createEmotes } from './avatar/emotes.js'
 import { createPostFx } from './postfx.js'
 import { setNeonBloom } from './propkit.js'
 import { buildDefaultCharacter, loadBaseCharacter } from './avatar/character.js'
@@ -26,6 +33,8 @@ let game = null
 // Settings come from the portal's settings menu (or their defaults offline).
 function applySetting(key, value) {
   if (key === 'camera_sensitivity') setCameraSensitivity(value)
+  else if (key === 'master_volume') setVolume(value / 100)
+  else if (key === 'show_fps') setFpsVisible(value)
   else if (key === 'fullscreen') bloxity.requestFullscreen(value)
   else if (key === 'graphics_quality' && renderer) {
     const next = graphicsPreset(value)
@@ -77,6 +86,7 @@ lighting = createLighting(scene, renderer, preset)
 const world = createWorld(scene) // the sea (river water) and clouds
 bloxity.loadingStep('Building the heist')
 game = createGame({ scene, camera, renderer, preset })
+initNet(game) // loads / mirrors the saved progress through the game server (offline-safe)
 createPlayerBody()
 syncYawToPlayer()
 
@@ -91,13 +101,45 @@ let animator = null
 let generation = 0
 let avatarReady = false
 
+const emotes = createEmotes()
+emotes.onChange(sendEmote) // the others see the emote you play
+const remotes = createRemotePlayers(scene) // everyone else in the room
+
 function setAvatar(next) {
   if (avatar) playerGroup.remove(avatar)
   disposeAnimator(animator)
   avatar = next
   playerGroup.add(avatar)
   animator = makeAnimator(avatar)
+  emotes.setAvatar(avatar)
 }
+
+// --- Chat bubbles -------------------------------------------------------------
+// The portal draws the chat box; the game shows each message as a bubble over the sender's character for
+// chat.bubbleSeconds (a new message replaces the old bubble). The message's userId is matched to a
+// character: this player's own, or another player's by the account id the server verified for them.
+let bubble = null
+let bubbleTimer = 0
+bloxity.onChat((m) => {
+  if (!m) return
+  if (!m.isLocalPlayer) return void remotes.say(m.userId, bloxity.bubbleText(m))
+  if (!avatar) return
+  bubble?.remove?.()
+  clearTimeout(bubbleTimer)
+  bubble = bloxity.attachBubble(THREE, playerGroup, bloxity.bubbleText(m))
+  bubbleTimer = setTimeout(() => {
+    bubble?.remove?.()
+    bubble = null
+  }, bloxity.chatBubbleSeconds() * 1000)
+})
+
+// --- Ad breaks --------------------------------------------------------------------
+// While Boxity plays an ad the game stands still and silent; it resumes when the break ends.
+let adPaused = false
+bloxity.onAdBreak((on) => {
+  adPaused = on
+  setMuted(on)
+})
 
 setAvatar(buildDefaultCharacter()) // visible immediately; replaced once the rig loads
 
@@ -112,6 +154,7 @@ async function loadAvatar() {
     if (mine !== generation) return
     applyProportions(group, bloxity.authState.user ? bloxity.getProportions() : null)
     setAvatar(group)
+    syncAvatar() // the others rebuild your look from the ids
   } finally {
     if (mine === generation) avatarReady = true
   }
@@ -126,7 +169,10 @@ bloxity.subscribeAuth((s) => {
   }
 })
 bloxity.onAvatarChanged(loadAvatar)
-bloxity.onProportionsChanged(() => applyProportions(avatar, bloxity.getProportions()))
+bloxity.onProportionsChanged(() => {
+  applyProportions(avatar, bloxity.getProportions())
+  syncAvatar()
+})
 bloxity.onRespawnRequest(respawn)
 
 // --- Modes + keys --------------------------------------------------------------
@@ -147,18 +193,28 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1) // clamp huge frames (tab switch, breakpoint)
   const elapsed = clock.elapsedTime
 
+  tickFps(dt)
+  if (adPaused) {
+    postfx.render() // an ad break: the world stands still (and silent) behind the ad
+    return
+  }
+
   stepPhysics(dt) // runs the player controller + world at the fixed rate, interpolates bodies
   interpolatePlayer()
 
   const p = player.renderPosition
   playerGroup.position.set(p.x, p.y, p.z)
   playerGroup.rotation.y = player.facing
+  const speed = Math.hypot(player.velocity.x, player.velocity.z)
   animator?.update(dt, {
     grounded: player.grounded,
-    speed: Math.hypot(player.velocity.x, player.velocity.z),
+    speed,
     verticalVelocity: player.velocity.y,
     turn: 0,
   })
+  emotes.update(dt, speed, player.grounded) // a portal emote plays on top of the animator until you move
+  sendPose(player, speed, game.bodyState()) // the others see you move, carry loot, ride the zipline
+  remotes.update(dt, net.players, net.sessionId, player.position) // ...and you see the ones near you
   game.animate(animator)
 
   updateCamera(camera, dt)
@@ -186,5 +242,5 @@ if (import.meta.env.DEV) {
     resetPlayer({ x, y, z }, facing)
     syncYawToPlayer()
   }
-  window.__game = { player, scene, renderer, camera, postfx, bodies: bodyCount, toggleMode, teleport, game }
+  window.__game = { player, scene, renderer, camera, postfx, bodies: bodyCount, toggleMode, teleport, game, physics, emotes, remotes }
 }

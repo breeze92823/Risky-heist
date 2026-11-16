@@ -6,11 +6,13 @@
 // zipline home, then place the loot on the base: each slot earns $/s into a collector
 // pad and adds its Luck to every future roll. Police heat ("Jail Chance") builds while
 // on the heist bank; at 100% you are busted and lose what you carry.
-import { CatmullRomCurve3, Group, Mesh, MeshStandardMaterial, Quaternion, TubeGeometry, Vector3 } from 'three'
-import { BASE, BOOSTS, BUILDING, DAILY, FLOORS, HIT_INTERVAL, JAIL, LAYOUT, LUCK_POWER, RARITIES, REBIRTH, SAVE_KEY, SPAWN, STALLS, TIMED_SPAWNS, TOOLS, TREASURES, UPGRADES, ZIPLINE } from '../config.js'
+import { CatmullRomCurve3, Group, Mesh, MeshStandardMaterial, TubeGeometry, Vector3 } from 'three'
+import { BASE, BOOSTS, BUILDING, DAILY, FLOOR_ODDS, FLOORS, HIT_INTERVAL, JAIL, LAYOUT, LUCK_SHIFT, RARITIES, rarityTextColor, REBIRTH, REWARDED_AD, SAVE_KEY, SPAWN, STALLS, TIMED_SPAWNS, TOOLS, TREASURES, UPGRADES, ZIPLINE } from '../config.js'
+import * as bloxity from '../bloxity.js'
+import { net, verifyAdReward } from '../net.js'
 import { player, onRespawn, resetPlayer, setDriver, isDriven } from '../player.js'
 import { syncYawToPlayer } from '../camera.js'
-import { BONE_INDEX } from '../avatar/rig.js'
+import { applyArmPose, makeTrolley, swingAmount } from './bodyFx.js'
 import { createFx } from './fx.js'
 import { sfx } from './sfx.js'
 import { buildHub, drawStatsBoard, drawTimerBoard } from './hub.js'
@@ -19,7 +21,7 @@ import { createBase } from './base.js'
 import { createInteractions } from './interact.js'
 import { createHud } from './hud.js'
 import { makeTreasure, setThumbEnvironment, thumbnail } from './models.js'
-import { boxGeo as boxGeoLocal, fmt, metal, money } from './kit.js'
+import { fmt, metal, money } from './kit.js'
 
 const RARITY = Object.fromEntries(RARITIES.map((r, i) => [r.id, { ...r, tier: i }]))
 const TREASURE = Object.fromEntries(TREASURES.map((t) => [t.id, t]))
@@ -49,34 +51,49 @@ function freshState() {
 }
 const cashMult = (rebirths) => 1 + REBIRTH.step * rebirths
 const rebirthCost = (rebirths) => Math.round(REBIRTH.baseCost * Math.pow(REBIRTH.costGrowth, rebirths))
-function loadState() {
+// A save (the local copy or the server's `progress`) -> a full state: fresh defaults under it, every
+// field validated, and the collectors credited for the time away (capped).
+function parseSave(d) {
   const s = freshState()
   try {
-    const raw = localStorage.getItem(SAVE_KEY)
-    if (raw) {
-      const d = JSON.parse(raw)
-      Object.assign(s, d)
-      s.stats = { ...freshState().stats, ...d.stats }
-      s.slots = Array.from({ length: SLOT_COUNT }, (_, i) => ({ id: d.slots?.[i]?.id && TREASURE[d.slots[i].id] ? d.slots[i].id : null, stored: Number(d.slots?.[i]?.stored) || 0 }))
-      s.carried = (d.carried ?? []).filter((id) => TREASURE[id])
-      // collectors keep filling while the game was closed (capped)
-      const away = Math.min(BASE.offlineCapSeconds, Math.max(0, (Date.now() - (d.lastSeen ?? Date.now())) / 1000))
-      s.rebirths = Math.max(0, Math.floor(Number(d.rebirths) || 0))
-      const dd = d.daily ?? {}
-      s.daily = {
-        day: Math.min(7, Math.max(1, Math.floor(Number(dd.day) || 1))),
-        claimed: Array.from({ length: 7 }, (_, i) => !!dd.claimed?.[i]),
-        nextAt: Number(dd.nextAt) || Date.now() + DAILY.dayHours * 3600000,
-      }
-      s.slots.forEach((sl, i) => {
-        if (sl.id && i < s.unlocked) sl.stored += TREASURE[sl.id].income * cashMult(s.rebirths) * away
-      })
-      s.awaySeconds = away
+    const { serverTime, ...save } = d // the server's clock reading rides along with `progress`
+    void serverTime
+    d = save
+    Object.assign(s, d)
+    s.stats = { ...freshState().stats, ...d.stats }
+    s.spawns = { ...freshState().spawns, ...d.spawns } // a timer a newer build added still starts
+    s.pending = { ...d.pending }
+    s.slots = Array.from({ length: SLOT_COUNT }, (_, i) => ({ id: d.slots?.[i]?.id && TREASURE[d.slots[i].id] ? d.slots[i].id : null, stored: Number(d.slots?.[i]?.stored) || 0 }))
+    s.carried = (d.carried ?? []).filter((id) => TREASURE[id])
+    // collectors keep filling while the game was closed (capped)
+    const away = Math.min(BASE.offlineCapSeconds, Math.max(0, (Date.now() - (d.lastSeen ?? Date.now())) / 1000))
+    s.rebirths = Math.max(0, Math.floor(Number(d.rebirths) || 0))
+    const dd = d.daily ?? {}
+    s.daily = {
+      day: Math.min(7, Math.max(1, Math.floor(Number(dd.day) || 1))),
+      claimed: Array.from({ length: 7 }, (_, i) => !!dd.claimed?.[i]),
+      nextAt: Number(dd.nextAt) || Date.now() + DAILY.dayHours * 3600000,
     }
+    s.slots.forEach((sl, i) => {
+      if (sl.id && i < s.unlocked) sl.stored += TREASURE[sl.id].income * cashMult(s.rebirths) * away
+    })
+    s.awaySeconds = away
+  } catch {
+    // a corrupt save: start fresh
+    return freshState()
+  }
+  return s
+}
+// The browser's copy: what a signed-out / offline session plays on, and what a new account adopts
+// as its first server save (net.js).
+function loadState() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY)
+    if (raw) return parseSave(JSON.parse(raw))
   } catch {
     // corrupt or blocked storage: start fresh
   }
-  return s
+  return freshState()
 }
 
 export function createGame({ scene, camera, renderer, preset }) {
@@ -84,7 +101,18 @@ export function createGame({ scene, camera, renderer, preset }) {
   fx.setDensity(preset.particles ?? 1)
   const hub = buildHub(scene)
   const building = buildBuilding(scene, { fx, sfx })
-  const base = createBase(scene, hub.baseSlots[BASE.player])
+  // One live base per hub plot. `base` is the local player's: plot BASE.player while offline, then the
+  // plot the server assigns this player in the room (setMyBase); the others show their owners' name and
+  // loot from the roster (setRoster).
+  const bases = hub.baseSlots.map((shell) => createBase(scene, shell))
+  let myPlot = BASE.player
+  let plotKnown = false
+  let base = bases[myPlot]
+  base.setMine(true)
+  // Interaction targets of your own base: they follow it when you are moved to another plot.
+  const slotAt = base.slots.map((s) => s.pedestal.clone())
+  const slotLabelAt = base.slots.map((s) => s.pedestal.clone().setY(1.6))
+  const boardAt = base.boardAt.clone()
   const interactions = createInteractions(camera)
   const state = loadState()
   const heist = { active: false, visited: new Set(), anchorFloor: 0, heat: 0, stopUntil: 0, riding: null, busted: false }
@@ -107,9 +135,9 @@ export function createGame({ scene, camera, renderer, preset }) {
   const inHeistZone = () => player.position.z < LAYOUT.river.minZ + 0.5
 
   function roll(floorIndex) {
-    const luck = totalLuck()
-    const k = 1 + (luck / 100) * LUCK_POWER
-    const w = FLOORS[floorIndex].weights.map((v, tier) => (tier === 0 ? v : v * Math.pow(k, tier)))
+    const centre = FLOORS[floorIndex].center + LUCK_SHIFT * Math.log2(1 + totalLuck() / 100)
+    const last = RARITIES.length - 1
+    const w = RARITIES.map((_, tier) => Math.exp(-((tier - centre) ** 2) / (2 * FLOOR_ODDS.spread ** 2)) * (tier === last ? FLOOR_ODDS.secretWeight : 1))
     let r = Math.random() * w.reduce((a, b) => a + b, 0)
     let tier = 0
     for (; tier < w.length - 1; tier++) {
@@ -120,19 +148,46 @@ export function createGame({ scene, camera, renderer, preset }) {
   }
 
   // --- Saving ------------------------------------------------------------------------------------
+  // The local copy is always written (it is the offline save and a new account's first server save);
+  // net.js listens (onSave) and mirrors it to the server once that has answered.
   let saveT = 0
-  function save() {
+  const saveListeners = new Set()
+  const snapshot = () => {
+    const { awaySeconds, ...rest } = state
+    void awaySeconds
+    return rest
+  }
+  function save(flush = false) {
     state.lastSeen = Date.now()
     try {
-      const { awaySeconds, ...rest } = state
-      void awaySeconds
-      localStorage.setItem(SAVE_KEY, JSON.stringify(rest))
+      localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot()))
     } catch {
       // storage blocked: the session still plays
     }
+    for (const fn of saveListeners) fn(flush)
   }
-  window.addEventListener('beforeunload', save)
-  document.addEventListener('visibilitychange', () => document.hidden && save())
+  window.addEventListener('beforeunload', () => save(true))
+  document.addEventListener('visibilitychange', () => document.hidden && save(true))
+
+  // The server's saved progress arrived (net.js): it replaces the local state in place (every closure
+  // here reads `state.*` live) and the world is redrawn from it. Collectors are credited for the
+  // time away, exactly as for a local load.
+  function hydrate(doc) {
+    const next = parseSave(doc)
+    for (const k of Object.keys(state)) delete state[k]
+    Object.assign(state, next)
+    hud.setMoney(state.money)
+    refreshCarry()
+    refreshBase()
+    redrawBoards()
+    dailyTick()
+    if (!heist.active && !heist.riding) {
+      building.resetDoors()
+      restock() // the tower's odds follow the new Luck
+    }
+    if (state.awaySeconds > 60 && totalIncome() > 0) hud.toast(`Your base earned ${money(totalIncome() * mult() * state.awaySeconds)} while you were away!`, '#6dff3a')
+    save()
+  }
 
   // --- HUD ---------------------------------------------------------------------------------------
   const hud = createHud({
@@ -145,10 +200,11 @@ export function createGame({ scene, camera, renderer, preset }) {
     onGuide: openGuide,
     onRebirth: openRebirth,
     onGifts: openDaily,
+    onWatchAd: watchAd,
   })
   function refreshCarry() {
     hud.setCarry(
-      state.carried.map((id) => ({ id, name: TREASURE[id].name, color: RARITY[TREASURE[id].rarity].color === '#1b1b1b' ? '#ffffff' : RARITY[TREASURE[id].rarity].color, thumb: thumb(id) })),
+      state.carried.map((id) => ({ id, name: TREASURE[id].name, color: rarityTextColor(RARITY[TREASURE[id].rarity]), thumb: thumb(id) })),
       state.carryCap,
     )
     refreshHeld()
@@ -225,14 +281,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     cable.geometry = new TubeGeometry(new CatmullRomCurve3(cablePts), 64, 0.07, 6)
   }
   // trolley + handle bar that runs on the cable
-  const trolley = new Group()
-  const tBody = new Mesh(boxGeoLocal(0.5, 0.3, 0.7), metal('#ffcc22', 0.35))
-  const tBar = new Mesh(boxGeoLocal(1.3, 0.12, 0.12), metal('#3a3e4a', 0.4))
-  tBar.position.y = -ZIPLINE.hang + 1.9
-  const tRod = new Mesh(boxGeoLocal(0.08, ZIPLINE.hang - 0.5, 0.08), metal('#3a3e4a', 0.4))
-  tRod.position.y = -(ZIPLINE.hang - 0.5) / 2
-  trolley.add(tBody, tBar, tRod)
-  trolley.visible = false
+  const trolley = makeTrolley()
   scene.add(trolley)
 
   const tmpA = new Vector3()
@@ -244,7 +293,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     const len = a.distanceTo(b)
     const lift = 0.55
     const drop = 0.55
-    const dur = len / ZIPLINE.speed
+    const dur = len / Math.max(ZIPLINE.speed, len / 9)
     let t = 0
     const start = new Vector3(player.position.x, player.position.y, player.position.z)
     const out = new Vector3()
@@ -288,16 +337,21 @@ export function createGame({ scene, camera, renderer, preset }) {
     void fromStand
   }
 
-  function rideToTower() {
+  function rideToTower(f = 0) {
     if (heist.riding) return
-    heist.anchorFloor = 0
-    cableEnd.copy(groundTop)
+    heist.anchorFloor = f
+    building.keepLive(f)
+    cableEnd.copy(anchorTop(f))
     rebuildCable()
     startHeist()
-    ride(hubTop, groundTop, hub.hubPadAt, hub.groundPadAt, () => {
-      hud.banner('Heist Started!', 'Smash the glass and grab the loot', '#ffe14d')
+    ride(hubTop, anchorTop(f), hub.hubPadAt, anchorStand(f), () => {
+      building.keepLive(-1)
+      hud.banner('Heist Started!', f ? `Floor ${f + 1} balcony - smash the glass and go!` : 'Smash the glass and grab the loot', '#ffe14d')
     })
   }
+  // The hub zipline always lands at the ground floor: higher floors are reached by the stairs and
+  // doors. (Leaving, you can zipline home from the balcony of any floor.)
+  const zipFromHub = () => rideToTower(0)
   function rideHome(f) {
     if (heist.riding) return
     const from = anchorTop(f)
@@ -350,16 +404,37 @@ export function createGame({ scene, camera, renderer, preset }) {
     sfx.busted()
     fx.flash('#ff2030', 0.6)
     fx.shake(1)
-    setTimeout(() => {
+    // Being caught is this game's death: Boxity's death screen (its ads + a countdown) comes up, the
+    // player stands still, and only the Respawn button (enabled when the countdown ends) sends them
+    // home. Without the portal (dev / blocked SDK) it is the old short timer.
+    const hold = { x: player.position.x, y: player.position.y, z: player.position.z }
+    setDriver(() => hold)
+    const finish = () => {
+      deathScreen = false
+      setDriver(null)
       resetPlayer({ ...SPAWN }, Math.PI)
       syncYawToPlayer()
       heist.heat = 0
       heist.busted = false
       endHeist(false)
       if (lost) hud.toast(`Lost ${lost} item${lost > 1 ? 's' : ''}`, '#ff6a6a')
-    }, 1400)
+    }
+    const screen = bloxity.showDeathScreen()
+    if (screen) {
+      deathScreen = true
+      hud.deathPrompt(screen, finish)
+    } else setTimeout(finish, 1400)
   }
+  let deathScreen = false // Boxity's death screen is up (bust)
   onRespawn(() => {
+    if (deathScreen) {
+      // "Reset Character" (R / the portal's respawn) is instant and separate from the death screen's countdown.
+      deathScreen = false
+      bloxity.hideDeathScreen()
+      hud.hideDeathPrompt()
+      heist.heat = 0
+      heist.busted = false
+    }
     if (heist.active && state.carried.length) {
       hud.toast('You dropped your loot!', '#ff6a6a')
       state.carried = []
@@ -374,7 +449,7 @@ export function createGame({ scene, camera, renderer, preset }) {
   // --- Interactions -------------------------------------------------------------------------------------
   let swingT = 0
   const register = (t) => interactions.register(t)
-  register({ at: hub.hubPadAt, radius: 3.2, title: () => 'Zipline', titleColor: () => '#5fd0ff', action: () => 'Ride to Tower', enabled: () => !heist.riding, press: rideToTower })
+  register({ at: hub.hubPadAt, radius: 3.2, title: () => 'Zipline', titleColor: () => '#5fd0ff', action: () => 'Ride to Tower', enabled: () => !heist.riding, press: zipFromHub })
   register({ at: hub.groundPadAt, radius: 3.0, title: () => 'Escape', titleColor: () => '#7dff5a', action: () => 'Zipline Back', enabled: () => !heist.riding && heist.anchorFloor === 0, press: () => rideHome(0) })
   for (const f of building.floors) {
     if (f.anchor) register({ at: f.anchor.stand, radius: 2.4, dy: 1.5, title: () => 'Escape', titleColor: () => '#7dff5a', action: () => 'Zipline Back', enabled: () => !heist.riding && f.exitDoor.broken, press: () => rideHome(f.i) })
@@ -399,7 +474,7 @@ export function createGame({ scene, camera, renderer, preset }) {
         dy: 1.5,
         labelAt: s.at.clone().setY(s.at.y + 1.2),
         title: () => (s.item ? TREASURE[s.item].name : ''),
-        titleColor: () => (s.item ? (RARITY[TREASURE[s.item].rarity].tier === 6 ? '#ffffff' : RARITY[TREASURE[s.item].rarity].color) : '#fff'),
+        titleColor: () => (s.item ? (rarityTextColor(RARITY[TREASURE[s.item].rarity])) : '#fff'),
         action: () => (state.carried.length >= state.carryCap ? 'Hands Full!' : 'Steal'),
         disabled: () => state.carried.length >= state.carryCap,
         enabled: () => !!s.item && !heist.riding,
@@ -421,7 +496,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     state.stats.stolen++
     if (!state.discovered.includes(id)) {
       state.discovered.push(id)
-      hud.toast(`New treasure discovered: ${t.name}!`, r.tier === 6 ? '#ffffff' : r.color)
+      hud.toast(`New treasure discovered: ${t.name}!`, rarityTextColor(r))
     }
     if (!state.stats.bestId || TREASURE[state.stats.bestId].value < t.value) state.stats.bestId = id
     heist.heat += JAIL.steal
@@ -431,7 +506,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     fx.floatText(p, money(t.value), { color: '#6dff3a' })
     if (r.tier >= 4) {
       fx.flash(r.glow, 0.25)
-      hud.banner(`${r.name}!`, t.name, r.tier === 6 ? '#ffffff' : r.color)
+      hud.banner(`${r.name}!`, t.name, rarityTextColor(r))
     }
     sfx.steal()
     refreshCarry()
@@ -440,10 +515,10 @@ export function createGame({ scene, camera, renderer, preset }) {
   // base slots
   base.slots.forEach((slot, i) => {
     register({
-      at: slot.pedestal,
+      at: slotAt[i],
       radius: 2.2,
       dy: 1.8,
-      labelAt: slot.pedestal.clone().setY(1.6),
+      labelAt: slotLabelAt[i],
       title: () => (i >= state.unlocked ? 'Locked Slot' : state.slots[i].id ? TREASURE[state.slots[i].id].name : 'Slot'),
       titleColor: () => (i >= state.unlocked ? '#9f9acb' : state.slots[i].id ? RARITY[TREASURE[state.slots[i].id].rarity].color : '#7dff5a'),
       action: () => (i >= state.unlocked ? 'Use Base Upgrade' : state.slots[i].id ? (state.carried.length ? 'Swap' : 'Pick Up') : 'Place'),
@@ -452,6 +527,47 @@ export function createGame({ scene, camera, renderer, preset }) {
       press: () => useSlot(i),
     })
   })
+  // The server put this player on hub plot `k` (net.js -> setRoster): their base, its tools and the
+  // interaction targets move there; the old plot becomes an ordinary (empty) one.
+  function setMyBase(k) {
+    if (!bases[k] || (plotKnown && k === myPlot)) return
+    if (k !== myPlot) {
+      base.setMine(false)
+      base.slots.forEach((s, i) => base.setItem(i, null))
+      base.setUnlocked(SLOT_COUNT)
+      myPlot = k
+      base = bases[k]
+      base.setOwner('')
+      base.setMine(true)
+      base.slots.forEach((s, i) => {
+        slotAt[i].copy(s.pedestal)
+        slotLabelAt[i].copy(s.pedestal).setY(1.6)
+      })
+      boardAt.copy(base.boardAt)
+      refreshBase()
+    }
+    plotKnown = true
+    hud.toast(`Your base is plot ${k + 1} - press Home to go there`, '#5fd0ff')
+  }
+  // The room's players as net.js reads them: [{ mine, base, name, unlocked, items[] }]. Fills the other
+  // plots with their owners' names and loot (an empty list = alone / offline: those plots are empty).
+  function setRoster(list) {
+    const me = list.find((p) => p.mine)
+    if (me && me.base >= 0) setMyBase(me.base)
+    const owners = new Map(list.filter((p) => !p.mine && p.base >= 0).map((p) => [p.base, p]))
+    bases.forEach((b, i) => {
+      if (i === myPlot) return
+      const o = owners.get(i)
+      b.setOwner(o ? o.name || 'Player' : '')
+      b.setUnlocked(o ? o.unlocked : SLOT_COUNT) // an empty plot shows no padlocks
+      b.slots.forEach((s, k) => {
+        const id = o && k < o.unlocked && TREASURE[o.items[k]] ? o.items[k] : null
+        if (s.item !== id) b.setItem(k, id)
+      })
+    })
+  }
+  // What this player's base shows the others (net.js sends it when it changes).
+  const baseView = () => ({ unlocked: state.unlocked, items: state.slots.map((s, i) => (i < state.unlocked && s.id ? s.id : '')) })
   function bestCarriedIndex() {
     let bi = 0
     state.carried.forEach((id, k) => {
@@ -528,7 +644,7 @@ export function createGame({ scene, camera, renderer, preset }) {
   }
 
   // base upgrade board + stalls
-  register({ at: base.boardAt, radius: 2.6, title: () => 'Base Upgrade', titleColor: () => '#5fb0ff', action: () => (baseCost() == null ? 'Maxed' : `Buy ${money(baseCost())}`), disabled: () => baseCost() == null, press: buyBaseSlots })
+  register({ at: boardAt, radius: 2.6, title: () => 'Base Upgrade', titleColor: () => '#5fb0ff', action: () => (baseCost() == null ? 'Maxed' : `Buy ${money(baseCost())}`), disabled: () => baseCost() == null, press: buyBaseSlots })
   register({ at: hub.stalls.upgrades.at, radius: 2.8, title: () => 'Upgrades', titleColor: () => STALLS.upgrades.ring, action: () => 'Open', press: openUpgrades })
   register({ at: hub.stalls.tools.at, radius: 2.8, title: () => 'Tools', titleColor: () => STALLS.tools.ring, action: () => 'Open', press: openTools })
   register({ at: hub.stalls.sell.at, radius: 2.8, title: () => 'Sell', titleColor: () => '#8dff5a', action: () => 'Open', press: openSell })
@@ -586,7 +702,7 @@ export function createGame({ scene, camera, renderer, preset }) {
       state.slots[freeSlot].id = id
       refreshBase()
     }
-    hud.banner(t.name, `${r.name} - ${money(t.income)}/s`, r.tier === 6 ? '#ffffff' : r.color)
+    hud.banner(t.name, `${r.name} - ${money(t.income)}/s`, rarityTextColor(r))
     fx.burst(new Vector3(player.position.x, player.position.y + 2, player.position.z), { count: 50, color: [r.glow, '#ffffff', '#ffd21f'], speed: 6, up: 4 })
     sfx.buy()
     save()
@@ -667,7 +783,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     if (!state.carried.length) rows.push(div('panel-note', 'Nothing in your hands.'))
     state.carried.forEach((id, k) => {
       const t = TREASURE[id]
-      rows.push(hud.row({ thumb: thumb(id), name: t.name, nameColor: RARITY[t.rarity].tier === 6 ? '#ffffff' : RARITY[t.rarity].color, lines: [{ text: RARITY[t.rarity].name, color: '#cfc8ff' }], button: { label: `Sell ${money(t.value * mult())}`, onClick: () => sellCarried(k) } }))
+      rows.push(hud.row({ thumb: thumb(id), name: t.name, nameColor: rarityTextColor(RARITY[t.rarity]), lines: [{ text: RARITY[t.rarity].name, color: '#cfc8ff' }], button: { label: `Sell ${money(t.value * mult())}`, onClick: () => sellCarried(k) } }))
     })
     if (state.carried.length > 1) {
       const all = state.carried.reduce((a, id) => a + TREASURE[id].value, 0) * mult()
@@ -678,7 +794,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     if (!onBase.length) rows.push(div('panel-note', 'Your base is empty.'))
     for (const [s, i] of onBase) {
       const t = TREASURE[s.id]
-      rows.push(hud.row({ thumb: thumb(s.id), name: t.name, nameColor: RARITY[t.rarity].tier === 6 ? '#ffffff' : RARITY[t.rarity].color, lines: [{ text: `${money(t.income * mult())}/s - +${t.luck}% luck`, color: '#c9ff9e' }], button: { label: `Sell ${money(t.value * mult())}`, color: '#ff8a1f', onClick: () => sellSlot(i) } }))
+      rows.push(hud.row({ thumb: thumb(s.id), name: t.name, nameColor: rarityTextColor(RARITY[t.rarity]), lines: [{ text: `${money(t.income * mult())}/s - +${t.luck}% luck`, color: '#c9ff9e' }], button: { label: `Sell ${money(t.value * mult())}`, color: '#ff8a1f', onClick: () => sellSlot(i) } }))
     }
     hud.openPanel({ title: 'Sell', icon: 'sell', color: '#3fd92a', onClosed: () => (interactions.blocked = false), body: frag(rows) })
     interactions.blocked = true
@@ -708,7 +824,7 @@ export function createGame({ scene, camera, renderer, preset }) {
       const r = RARITY[t.rarity]
       const known = state.discovered.includes(t.id)
       const card = div(`index-card${known ? '' : ' locked'}`)
-      card.style.setProperty('--rc', r.tier === 6 ? '#ffffff' : r.color)
+      card.style.setProperty('--rc', rarityTextColor(r))
       const img = document.createElement('img')
       img.src = thumb(t.id)
       card.append(img, div('n', known ? t.name : '???'), div('r', r.name), div('s', known ? `${money(t.income)}/s` : ''))
@@ -777,6 +893,37 @@ export function createGame({ scene, camera, renderer, preset }) {
     save()
   }
 
+  // --- Rewarded ad (Free Cash) ----------------------------------------------------------------------------
+  // Boxity plays the ad; the reward token goes to the game server, which checks it with Bloxity (single
+  // use, this game, 5 minutes); only then is the cash granted. Needs the server, so it is offered only
+  // while connected. The reward is cash worth a while of the base's income, never premium currency.
+  let adBusy = false
+  let adReadyAt = 0
+  const adReward = () => Math.round(Math.max(REWARDED_AD.base, totalIncome() * mult() * REWARDED_AD.incomeSeconds))
+  async function watchAd() {
+    if (adBusy || Date.now() < adReadyAt || heist.busted) return
+    adBusy = true
+    try {
+      const r = await bloxity.showRewardedAd(REWARDED_AD.placement)
+      if (r.status !== 'completed') {
+        if (r.status === 'error' || r.status === 'disabled' || r.status === 'unavailable') hud.toast('No ad is available right now', '#ff6a6a')
+        return
+      }
+      if (!(await verifyAdReward(r.rewardToken, REWARDED_AD.placement))) {
+        hud.toast("The ad reward couldn't be verified", '#ff6a6a')
+        return
+      }
+      const amount = adReward()
+      earn(amount, new Vector3(player.position.x, player.position.y + 2.4, player.position.z))
+      adReadyAt = Date.now() + REWARDED_AD.cooldownSeconds * 1000
+      sfx.cash()
+      hud.toast(`Thanks for watching! +${money(amount)}`, '#6dff3a')
+      save()
+    } finally {
+      adBusy = false
+    }
+  }
+
   // --- Daily Gifts -------------------------------------------------------------------------------------
   const DAY_MS = DAILY.dayHours * 3600000
   const rewardWorth = (r) => r.cash ?? TREASURE[r.item].value
@@ -825,7 +972,7 @@ export function createGame({ scene, camera, renderer, preset }) {
       return {
         day: i + 1,
         title: t ? t.name : money(r.cash),
-        titleColor: t ? (rr.tier === 6 ? '#ffffff' : rr.color) : '#7dff5a',
+        titleColor: t ? rarityTextColor(rr) : '#7dff5a',
         thumb: t ? thumb(t.id) : null,
         state: d.claimed[i] ? 'claimed' : i < d.day ? 'claim' : 'locked',
       }
@@ -926,7 +1073,7 @@ export function createGame({ scene, camera, renderer, preset }) {
       drawStatsBoard(ctx, w, h, [
         ['Cash earned', money(state.stats.earned)],
         ['Items stolen', fmt(state.stats.stolen)],
-        ['Best steal', best ? best.name : '-', best ? (RARITY[best.rarity].tier === 6 ? '#ffffff' : RARITY[best.rarity].color) : '#ffffff'],
+        ['Best steal', best ? best.name : '-', best ? (rarityTextColor(RARITY[best.rarity])) : '#ffffff'],
         ['Highest floor', `${state.stats.maxFloor}`],
         ['Heists / Busts', `${state.stats.heists} / ${state.stats.busts}`],
       ]),
@@ -957,8 +1104,19 @@ export function createGame({ scene, camera, renderer, preset }) {
       return hud.panelOpen
     },
     setDensity: (k) => fx.setDensity(k),
+    // The save as the server stores it, and the net.js hooks: fn(flush) runs on every save() (flush =
+    // the tab is closing / hiding, so send now); hydrate(doc) loads the account's progress.
+    snapshot,
+    hydrate,
+    setRoster,
+    baseView,
+    toast: (text, color) => hud.toast(text, color),
+    onSave: (fn) => {
+      saveListeners.add(fn)
+      return () => saveListeners.delete(fn)
+    },
     // dev console handle (main.js exposes it as __game.game in dev builds only)
-    debug: { state, heist, building, base, rideToTower, rideHome, steal, bust, save, openRebirth, openDaily },
+    debug: { state, heist, building, get base() { return base }, bases, rideToTower, rideHome, steal, bust, save, openRebirth, openDaily },
     update(dt, t) {
       pos.set(player.renderPosition.x, player.renderPosition.y, player.renderPosition.z)
       const nowMs = Date.now()
@@ -1028,11 +1186,16 @@ export function createGame({ scene, camera, renderer, preset }) {
           const F = FLOORS[room]
           hud.banner(`Floor ${room + 1}: ${F.name}`, `x${F.luckSign} Luck`, '#ffe14d')
           sfx.floor()
-          if (room + 1 > state.stats.maxFloor) state.stats.maxFloor = room + 1
+        }
+        // Highest floor reached (what the hub zipline offers). Tracked on every frame in the tower, not only
+        // on the first visit of a heist, so it can never be missed (and is saved at once).
+        if (zone && !heist.riding && room + 1 > state.stats.maxFloor) {
+          state.stats.maxFloor = room + 1
+          save()
         }
         lastRoom = room
-        if (zone) heist.anchorFloor = room
-      } else if (fi < 0 && pos.y < 3) heist.anchorFloor = 0
+        if (zone && !heist.riding) heist.anchorFloor = room
+      } else if (fi < 0 && pos.y < 3 && !heist.riding) heist.anchorFloor = 0
       const tf = building.insideFloor(pos, false)
       hud.setFloorTag(zone && tf >= 0 ? `Floor ${tf + 1} - ${FLOORS[tf].name} - x${FLOORS[tf].luckSign} Luck` : '')
       if (!heist.riding) {
@@ -1056,6 +1219,8 @@ export function createGame({ scene, camera, renderer, preset }) {
       if (dailyT <= 0) {
         dailyT = 1
         dailyTick()
+        // the Free Cash button: shown while Boxity can play an ad and the server can verify it
+        hud.setAdOffer(!heist.busted && !adBusy && net.connected && bloxity.adsAvailable(), `+${money(adReward())}`, Math.max(0, (adReadyAt - nowMs) / 1000))
       }
       if (panelTick) {
         panelT -= dt
@@ -1065,9 +1230,16 @@ export function createGame({ scene, camera, renderer, preset }) {
         }
       }
       swingT = Math.max(0, swingT - dt)
-      hub.update(dt, t)
+      // police searchlights: caught in a spot (on the yard ground, outside the building) = busted
+      const policeAwake = performance.now() >= heist.stopUntil
+      const watch = policeAwake && inHeistZone() && !heist.busted && !heist.riding && building.insideFloor(pos) < 0
+      if (hub.update(dt, t, pos, policeAwake, watch) && watch) {
+        heist.heat = 100
+        hud.toast('Spotted by the police!', '#ff6a6a')
+        bust()
+      }
       building.update(dt, t, pos)
-      base.update(dt, t)
+      for (const b of bases) b.update(dt, t)
       interactions.update(dt, pos)
       fx.update(dt)
 
@@ -1079,33 +1251,10 @@ export function createGame({ scene, camera, renderer, preset }) {
     },
     // After the animator: arm overrides (zipline hang, hitting swings).
     animate(animator) {
-      if (!animator?.rig) return
-      const ride = !!heist.riding
-      const swing = swingT > 0 ? Math.sin((1 - swingT / HIT_INTERVAL) * Math.PI) : 0
-      if (!ride && swing <= 0 && !heldId) return
-      for (const b of animator.rig.bindings) {
-        let x = 0
-        let z = 0
-        if (b.index === BONE_INDEX.ArmR1 * 3) {
-          if (ride) {
-            x = -2.9
-            z = 0.25
-          } else if (swing > 0) x = -2.4 * swing - 0.3
-          else if (heldId) x = -2.8
-        } else if (b.index === BONE_INDEX.ArmL1 * 3) {
-          if (ride) {
-            x = -2.9
-            z = -0.25
-          } else if (heldId && swing <= 0) x = -2.8
-        } else if ((b.index === BONE_INDEX.LegL1 * 3 || b.index === BONE_INDEX.LegR1 * 3) && ride) x = -0.35
-        if (x === 0 && z === 0) continue
-        qa.setFromAxisAngle(b.axisX, x)
-        if (z) qa.premultiply(qb.setFromAxisAngle(b.axisZ, z))
-        b.bone.quaternion.premultiply(qa)
-      }
+      applyArmPose(animator?.rig, { ride: !!heist.riding, swing: swingAmount(swingT), holding: !!heldId })
     },
+    // What the others see of this player's body (net.js sends it with the pose): the best carried
+    // treasure (floating over the head), the zipline ride and the door swing.
+    bodyState: () => ({ carry: heldId || '', riding: !!heist.riding, swing: swingT > 0 }),
   }
 }
-
-const qa = new Quaternion()
-const qb = new Quaternion()
