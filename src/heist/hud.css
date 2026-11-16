@@ -118,9 +118,15 @@
   flex-direction: column;
   gap: clamp(6px, 1.6vmin, 16px);
 }
+/* The column runs from under the portal's reserved corner down to just above the money counter
+   (bottom-left); when the five buttons don't fit in that height they wrap into a second column
+   instead of running over the money. */
 .hud-left {
   left: calc(var(--safe-l) + var(--pad));
   top: max(calc(var(--reserved-top) + 12px), 28vh);
+  bottom: calc(var(--safe-b) + var(--pad) + clamp(16px, 3vmin, 30px) + clamp(30px, 7vmin, 76px) + 10px);
+  flex-wrap: wrap;
+  align-content: flex-start;
 }
 .hud-right {
   right: calc(var(--safe-r) + var(--pad));
@@ -1169,6 +1175,10 @@
 }
 .touch-ui .hud-right {
   top: max(calc(var(--safe-t) + 130px), 22vh);
+}
+/* Money moves top-right on touch, so the left column only has to stay above the joystick. */
+.touch-ui .hud-left {
+  bottom: calc(var(--safe-b) + var(--pad) + clamp(120px, 30vmin, 190px));
 }
 /* Portrait phones: lift the hotbar and buttons above the jump/run cluster. */
 @media (orientation: portrait) {
