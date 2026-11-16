@@ -1,9 +1,9 @@
 // A base in the hub: a studded platform with a red carpet down the middle, a
 // row of slot pedestals on each side and a green cash collector beside each
 // slot. buildBaseShell adds the static parts (baked with the hub) for any base;
-// createBase adds the player's live parts: padlocks on locked slots, the placed
-// treasures with their info labels and light rays, collector cash labels, the
-// Luck / Income sign and the Base Upgrade board.
+// createBase adds a base's live parts (one per hub plot, see game.js): padlocks on locked slots, the
+// placed treasures with light rays and an owner sign; the local player's own base (setMine) also gets
+// treasure info labels, collector cash labels, the Luck / Income sign and the Base Upgrade board.
 import { Group, Mesh, TorusGeometry, Vector3 } from 'three'
 import { BASE, RARITIES, TREASURES } from '../config.js'
 import { box, boxMM, canvasSign, emissive, fmt, glowSprite, groundDecal, infoLabel, metal, money, outlinedText, raysTexture, roundRect, solid, studs } from './kit.js'
@@ -91,16 +91,19 @@ export function createBase(scene, shell) {
     const lock = padlock()
     lock.position.set(0, 0, 0)
     holder.add(lock)
-    const cash = infoLabel([{ text: '$0', size: 46, color: '#7dff5a' }], 0.022)
-    cash.position.set(s.pad.x, 1.0, s.pad.z)
-    cash.visible = false
-    live.add(cash)
-    return { ...s, holder, lock, cash, item: null, display: null, label: null, rays: null, glow: null, spin: Math.random() * 6 }
+    return { ...s, holder, lock, cash: null, item: null, display: null, label: null, rays: null, glow: null, spin: Math.random() * 6 }
   })
 
-  const sign = infoLabel([{ text: 'Your Base', size: 60, color: '#ffffff' }], 0.03)
+  let mine = false
+  let owner = '' // another player's name on this plot, '' = nobody
+  const sign = infoLabel([{ text: 'Empty Base', size: 60, color: '#9f9acb' }], 0.03)
   sign.position.set(cx, 8.6, cz - D + 0.6)
   live.add(sign)
+  function paintSign() {
+    if (mine) sign.setLines([{ text: 'Your Base', size: 60, color: '#ffffff' }])
+    else if (owner) sign.setLines([{ text: `${owner}'s Base`, size: 60, color: '#d7d3ff' }])
+    else sign.setLines([{ text: 'Empty Base', size: 60, color: '#9f9acb' }])
+  }
   const stats = infoLabel([{ text: 'Luck: +0%', size: 46, color: '#ffe14d' }, { text: 'Income: $0/s', size: 46, color: '#7dff5a' }], 0.026)
   stats.position.set(cx, 6.1, cz - D + 0.6)
   live.add(stats)
@@ -114,13 +117,14 @@ export function createBase(scene, shell) {
   box(legs, 0.18, 1.2, 0.18, metal('#2d3140'), cx - 6.2, 0.6, cz - D - 2.0)
   box(legs, 3.8, 2.0, 0.12, solid('#1a2c55', 0.6), cx - 7.6, 2.0, cz - D - 2.0)
   live.add(legs)
+  stats.visible = board.mesh.visible = legs.visible = false // the owner's tools: shown by setMine
   const boardAt = new Vector3(cx - 7.6, 0.4, cz - D - 2.6)
 
   function setItem(index, id) {
     const s = slots[index]
     if (s.display) {
       s.holder.remove(s.display)
-      s.label.dispose()
+      s.label?.dispose()
       s.holder.remove(s.label, s.rays, s.glow)
       s.display = s.label = s.rays = s.glow = null
     }
@@ -134,7 +138,8 @@ export function createBase(scene, shell) {
       if (o.isMesh) o.castShadow = true
     })
     s.holder.add(s.display)
-    s.label = infoLabel(
+    // Info labels (canvas sprites) only on your own base: another player's loot is just the model.
+    s.label = !mine ? null : infoLabel(
       [
         { text: t.name, size: 40, color: '#ffffff' },
         { text: r.name, size: 30, color: r.color, outline: r.outline ?? '#0d0a1f' },
@@ -143,8 +148,10 @@ export function createBase(scene, shell) {
       ],
       0.016,
     )
-    s.label.position.y = 2.0
-    s.holder.add(s.label)
+    if (s.label) {
+      s.label.position.y = 2.0
+      s.holder.add(s.label)
+    }
     s.rays = groundDecal(raysTexture(), r.glow, 3.4, r.tier >= 3 ? 0.85 : 0.5)
     s.rays.position.y = 0.03
     s.holder.add(s.rays)
@@ -159,11 +166,37 @@ export function createBase(scene, shell) {
     })
   }
 
+  // Collector cash labels exist only on your own base, and are made when first needed.
   function setStored(index, amount) {
     const s = slots[index]
-    const show = amount >= 1
-    s.cash.visible = show
-    if (show) s.cash.setLines([{ text: money(amount), size: 46, color: '#7dff5a' }])
+    const show = mine && amount >= 1
+    if (!show) {
+      if (s.cash) s.cash.visible = false
+      return
+    }
+    if (!s.cash) {
+      s.cash = infoLabel([{ text: '$0', size: 46, color: '#7dff5a' }], 0.022)
+      s.cash.position.set(s.pad.x, 1.0, s.pad.z)
+      live.add(s.cash)
+    }
+    s.cash.visible = true
+    s.cash.setLines([{ text: money(amount), size: 46, color: '#7dff5a' }])
+  }
+
+  // This plot is the local player's (the server assigns it): your tools and labels show, the items
+  // are re-set by the caller so they get their info labels (or lose them).
+  function setMine(on) {
+    mine = on
+    stats.visible = board.mesh.visible = legs.visible = on
+    if (!on) for (const s of slots) if (s.cash) s.cash.visible = false
+    paintSign()
+  }
+
+  // Another player's name on this plot ('' = nobody).
+  function setOwner(name) {
+    if (owner === name) return
+    owner = name
+    paintSign()
   }
 
   function setStats(luck, income) {
@@ -194,6 +227,11 @@ export function createBase(scene, shell) {
     slots,
     boardAt,
     setItem,
+    setMine,
+    setOwner,
+    get mine() {
+      return mine
+    },
     setUnlocked,
     setStored,
     setStats,

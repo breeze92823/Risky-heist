@@ -8,6 +8,7 @@ import {
   CanvasTexture,
   Color,
   ConeGeometry,
+  ExtrudeGeometry,
   CylinderGeometry,
   DirectionalLight,
   DodecahedronGeometry,
@@ -15,6 +16,7 @@ import {
   Group,
   LatheGeometry,
   LinearSRGBColorSpace,
+  MeshBasicMaterial,
   Mesh,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
@@ -24,6 +26,7 @@ import {
   RepeatWrapping,
   PlaneGeometry,
   Scene,
+  Shape,
   SphereGeometry,
   SRGBColorSpace,
   TorusGeometry,
@@ -106,6 +109,22 @@ function dollarFace(key, bg = '#ffcf3a', fg = '#b77d00') {
     ctx.textBaseline = 'middle'
     ctx.fillText('$', w / 2, h / 2 + 4)
   }, { metalness: 0.9, roughness: 0.3 })
+}
+
+// Emerald cut (step-cut table + pavilion) and brilliant cut, in any colour.
+function cutGem(color, e) {
+  const g = new Group()
+  add(g, new CylinderGeometry(0.34, 0.5, 0.26, 8, 1), gem(color, e), 0, 0.72, 0, 0, Math.PI / 8, 0, [1, 1, 0.75])
+  add(g, new ConeGeometry(0.5, 0.62, 8), gem(color, e * 0.9), 0, 0.28, 0, Math.PI, Math.PI / 8, 0, [1, 1, 0.75])
+  add(g, cyl(0.34, 0.34, 0.01, 8), gem('#ffffff', 0.9), 0, 0.855, 0, 0, Math.PI / 8, 0, [1, 1, 0.75])
+  return g
+}
+function brilliant(color, e) {
+  const g = new Group()
+  add(g, new CylinderGeometry(0.3, 0.55, 0.24, 10), gem(color, e), 0, 0.9, 0)
+  add(g, new ConeGeometry(0.55, 0.76, 10), gem(color, e), 0, 0.4, 0, Math.PI, 0, 0)
+  add(g, cyl(0.3, 0.3, 0.01, 10), gem('#ffffff', 1.2), 0, 1.025, 0)
+  return g
 }
 
 // --- Builders ----------------------------------------------------------------------
@@ -464,6 +483,360 @@ const BUILD = {
     add(g, cyl(0.02, 0.02, 0.36, 8), shell, 0.2, 1.12, 0)
     add(g, sph(0.06, 12, 10), glow('#ff2d4f', 3), 0.2, 1.32, 0)
     add(g, B(0.5, 0.2, 0.5), iron(), 0, 0.1, 0)
+    return g
+  },
+  // --- recolours of existing shapes ---
+  copper() {
+    const g = new Group()
+    const cu = mat('copper', () => new MeshStandardMaterial({ color: '#d9824a', metalness: 1, roughness: 0.3 }))
+    const geo = ingotGeo(0.95, 0.28, 0.42)
+    add(g, geo, cu, -0.25, 0.14, 0)
+    add(g, geo, cu, 0.25, 0.14, 0.05, 0, 0.1, 0)
+    add(g, geo, cu, 0, 0.42, 0.02, 0, -0.08, 0)
+    return g
+  },
+  silvercoin() {
+    const g = new Group()
+    const face = dollarFace('silverface', '#e6ebf2', '#7d8696')
+    add(g, cyl(0.5, 0.5, 0.1, 40), [silver(), face, face], 0, 0.55, 0, Math.PI / 2, 0, 0)
+    add(g, tor(0.5, 0.045, 8, 40), silver(), 0, 0.55, 0)
+    for (let i = 0; i < 4; i++) add(g, cyl(0.34, 0.34, 0.06, 32), [silver(), face, face], 0.55 - i * 0.02, 0.05 + i * 0.065, 0.1)
+    return g
+  },
+  topaz() {
+    return cutGem('#ffb31a', 0.55)
+  },
+  sapphire() {
+    return cutGem('#2a6bff', 0.6)
+  },
+  ruby() {
+    return brilliant('#ff1f3d', 0.6)
+  },
+  grail() {
+    const g = new Group()
+    const pts = [[0, 0], [0.36, 0], [0.36, 0.05], [0.12, 0.12], [0.07, 0.2], [0.06, 0.52], [0.1, 0.58], [0.24, 0.64], [0.4, 0.84], [0.44, 1.1], [0.42, 1.12], [0.36, 0.88], [0.0, 0.7]].map(([x, y]) => new Vector2(x, y))
+    add(g, new LatheGeometry(pts, 32), gold())
+    add(g, cyl(0.38, 0.38, 0.02, 32), glow('#fff2b0', 2.2), 0, 1.0, 0)
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2
+      add(g, new OctahedronGeometry(0.06, 0), gem(['#ff2d55', '#2dc6ff', '#59ff8a', '#ffffff'][i % 4], 0.8), Math.cos(a) * 0.4, 0.88, Math.sin(a) * 0.4)
+    }
+    add(g, tor(0.55, 0.03, 8, 40), glow('#fff2b0', 2.5), 0, 1.35, 0, Math.PI / 2)
+    return g
+  },
+  comet() {
+    const g = new Group()
+    add(g, new DodecahedronGeometry(0.42, 1), gem('#7fe8ff', 0.9), 0.3, 0.55, 0)
+    for (let i = 0; i < 6; i++) add(g, new ConeGeometry(0.32 - i * 0.04, 0.5, 8), glow(i % 2 ? '#bff6ff' : '#5fd0ff', 1.6), -0.15 - i * 0.18, 0.55 + Math.sin(i) * 0.05, 0, 0, 0, Math.PI / 2)
+    return g
+  },
+  // --- new shapes ---
+  wallet() {
+    const g = new Group()
+    const leather = plain('#6b3a1a', 0.7)
+    add(g, B(0.9, 0.16, 0.6), leather, 0, 0.08, 0)
+    add(g, B(0.9, 0.16, 0.6), plain('#7d4521', 0.7), 0, 0.26, -0.02, -0.25, 0, 0)
+    for (let i = 0; i < 4; i++) add(g, B(0.8, 0.02, 0.5), plain('#7fcf6a'), 0, 0.18 + i * 0.03, 0.05 + i * 0.03, -0.3 - i * 0.1, 0, 0)
+    add(g, B(0.2, 0.06, 0.12), gold(), 0.3, 0.17, 0.3)
+    return g
+  },
+  perfume() {
+    const g = new Group()
+    const pts = [[0, 0], [0.34, 0], [0.38, 0.06], [0.38, 0.5], [0.28, 0.66], [0.1, 0.72], [0.1, 0.82]].map(([x, y]) => new Vector2(x, y))
+    const bottle = add(g, new LatheGeometry(pts, 6), mat('pinkglass', () => new MeshPhysicalMaterial({ color: '#ff8ad8', roughness: 0.05, transparent: true, opacity: 0.75, clearcoat: 1, flatShading: true })))
+    bottle.renderOrder = 2
+    add(g, cyl(0.3, 0.3, 0.42, 6), glow('#ff5fb8', 0.8), 0, 0.28, 0)
+    add(g, sph(0.16, 16, 12), gold(), 0, 0.95, 0)
+    add(g, cyl(0.06, 0.06, 0.12, 12), black(), 0.18, 0.95, 0, 0, 0, Math.PI / 2)
+    add(g, sph(0.12, 12, 10), plain('#e0207f', 0.6), 0.32, 0.95, 0)
+    return g
+  },
+  camera() {
+    const g = new Group()
+    add(g, B(1.0, 0.6, 0.45), black(), 0, 0.3, 0)
+    add(g, B(1.02, 0.12, 0.47), silver(), 0, 0.62, 0)
+    add(g, cyl(0.24, 0.24, 0.3, 28), iron(), 0, 0.32, 0.36, Math.PI / 2, 0, 0)
+    add(g, cyl(0.18, 0.18, 0.02, 28), gem('#5fb6ff', 0.6), 0, 0.32, 0.52, Math.PI / 2, 0, 0)
+    add(g, B(0.22, 0.14, 0.12), glow('#ffffff', 1.5), -0.32, 0.76, 0)
+    add(g, cyl(0.06, 0.06, 0.1, 12), plain('#e0262b'), 0.32, 0.72, 0)
+    return g
+  },
+  ring() {
+    const g = new Group()
+    add(g, tor(0.36, 0.07, 14, 48), gold(), 0, 0.42, 0)
+    add(g, cyl(0.12, 0.08, 0.1, 6), gold(), 0, 0.82, 0)
+    add(g, new OctahedronGeometry(0.2, 0), gem('#ff3bd0', 0.7), 0, 0.98, 0, 0, 0, 0, [1, 0.8, 1])
+    return g
+  },
+  vase() {
+    const g = new Group()
+    const porcelain = canvasMat('ming', 128, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#f4f6ff'
+      ctx.fillRect(0, 0, w, h)
+      ctx.strokeStyle = '#1f4fb8'
+      ctx.lineWidth = 5
+      for (let y = 10; y < h; y += 30) {
+        ctx.beginPath()
+        for (let x = 0; x <= w; x += 8) ctx.lineTo(x, y + Math.sin(x / 10) * 6)
+        ctx.stroke()
+      }
+      ctx.fillStyle = '#1f4fb8'
+      for (let i = 0; i < 6; i++) {
+        ctx.beginPath()
+        ctx.arc(16 + i * 20, 64, 6, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }, { roughness: 0.25 })
+    const pts = [[0, 0], [0.22, 0], [0.26, 0.05], [0.42, 0.35], [0.44, 0.6], [0.3, 0.95], [0.16, 1.1], [0.18, 1.25], [0.24, 1.3]].map(([x, y]) => new Vector2(x, y))
+    add(g, new LatheGeometry(pts, 32), porcelain)
+    return g
+  },
+  coinpile() {
+    const g = new Group()
+    const face = dollarFace('coinface')
+    const r = mulberry32(17)
+    for (let i = 0; i < 26; i++) {
+      const a = r() * Math.PI * 2
+      const d = r() * 0.45
+      const y = 0.04 + (0.5 - d) * 0.55 * r()
+      add(g, cyl(0.16, 0.16, 0.04, 20), [gold(), face, face], Math.cos(a) * d, y, Math.sin(a) * d, r() * 0.8, 0, r() * 0.8)
+    }
+    add(g, new ConeGeometry(0.5, 0.35, 20), gold(), 0, 0.17, 0)
+    return g
+  },
+  mask() {
+    const g = new Group()
+    const face = new SphereGeometry(0.5, 28, 16, 0, Math.PI, 0, Math.PI)
+    add(g, face, mat('maskgold', () => new MeshStandardMaterial({ color: '#ffc531', metalness: 0.9, roughness: 0.25, side: DoubleSide })), 0, 0.6, 0, 0, -Math.PI / 2, 0, [1, 0.7, 0.5])
+    add(g, sph(0.1, 12, 10), black(), -0.18, 0.66, 0.24, 0, 0, 0, [1, 0.6, 0.3])
+    add(g, sph(0.1, 12, 10), black(), 0.18, 0.66, 0.24, 0, 0, 0, [1, 0.6, 0.3])
+    for (let i = 0; i < 5; i++) add(g, new ConeGeometry(0.06, 0.5, 6), plain(['#ff2d55', '#2dc6ff', '#59ff8a', '#ffd23a', '#b46bff'][i]), -0.3 + i * 0.15, 1.05, -0.05, 0, 0, (i - 2) * 0.25)
+    add(g, cyl(0.02, 0.02, 0.7, 6), plain('#7a4a24'), 0.45, 0.35, 0, 0, 0, -0.4)
+    return g
+  },
+  chest() {
+    const g = new Group()
+    const wood = plain('#8a4a22', 0.7)
+    add(g, B(1.0, 0.5, 0.62), wood, 0, 0.25, 0)
+    const lid = new Group()
+    lid.position.set(0, 0.5, -0.31)
+    lid.rotation.x = -1.0
+    add(lid, new CylinderGeometry(0.31, 0.31, 1.0, 16, 1, false, 0, Math.PI), wood, 0, 0, 0.31, 0, 0, Math.PI / 2)
+    g.add(lid)
+    for (const x of [-0.42, 0, 0.42]) add(g, B(0.08, 0.52, 0.64), gold(), x, 0.26, 0)
+    add(g, B(0.16, 0.18, 0.04), gold(), 0, 0.38, 0.32)
+    const face = dollarFace('coinface')
+    for (let i = 0; i < 12; i++) add(g, cyl(0.1, 0.1, 0.03, 16), [gold(), face, face], -0.35 + (i % 6) * 0.14, 0.52 + (i > 5 ? 0.05 : 0), -0.12 + (i > 5 ? 0.15 : 0), 0.3, 0, 0.2)
+    add(g, new OctahedronGeometry(0.1, 0), gem('#ff2d55', 0.8), 0.15, 0.62, 0.05)
+    return g
+  },
+  idol() {
+    const g = new Group()
+    add(g, B(0.6, 0.16, 0.5), plain('#5f5a66', 0.9), 0, 0.08, 0)
+    add(g, cyl(0.2, 0.26, 0.6, 12), gold(), 0, 0.46, 0)
+    add(g, sph(0.24, 16, 12), gold(), 0, 0.92, 0, 0, 0, 0, [1, 1.15, 0.95])
+    add(g, B(0.08, 0.06, 0.02), glow('#2dff8a', 2.5), -0.08, 0.98, 0.22)
+    add(g, B(0.08, 0.06, 0.02), glow('#2dff8a', 2.5), 0.08, 0.98, 0.22)
+    add(g, new ConeGeometry(0.24, 0.3, 12), darkGold(), 0, 1.25, 0)
+    for (const sx of [-1, 1]) add(g, cyl(0.06, 0.06, 0.42, 8), gold(), sx * 0.27, 0.58, 0.05, 0.4, 0, sx * 0.3)
+    return g
+  },
+  egg() {
+    const g = new Group()
+    const shell = canvasMat('egg', 128, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#c2185b'
+      ctx.fillRect(0, 0, w, h)
+      ctx.strokeStyle = '#ffd23a'
+      ctx.lineWidth = 4
+      for (let i = 0; i < 8; i++) {
+        ctx.beginPath()
+        ctx.moveTo((i / 8) * w, 0)
+        ctx.lineTo(((i + 4) / 8) * w, h)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo((i / 8) * w, h)
+        ctx.lineTo(((i + 4) / 8) * w, 0)
+        ctx.stroke()
+      }
+    }, { metalness: 0.4, roughness: 0.25 })
+    add(g, sph(0.4, 28, 20), shell, 0, 0.72, 0, 0, 0, 0, [0.85, 1.15, 0.85])
+    add(g, cyl(0.16, 0.24, 0.14, 16), gold(), 0, 0.2, 0)
+    add(g, cyl(0.1, 0.1, 0.12, 12), gold(), 0, 0.3, 0)
+    add(g, sph(0.06, 10, 8), gem('#59ff8a', 0.8), 0, 1.2, 0)
+    for (let i = 0; i < 6; i++) add(g, sph(0.035, 8, 6), pearl(), Math.cos(i) * 0.34, 0.72, Math.sin(i) * 0.34)
+    return g
+  },
+  skull() {
+    const g = new Group()
+    const crystal = gem('#bff6ff', 0.5)
+    add(g, sph(0.42, 20, 16), crystal, 0, 0.62, 0, 0, 0, 0, [1, 0.95, 1.1])
+    add(g, B(0.5, 0.26, 0.5), crystal, 0, 0.3, 0.12)
+    add(g, sph(0.11, 12, 10), black(), -0.15, 0.6, 0.36)
+    add(g, sph(0.11, 12, 10), black(), 0.15, 0.6, 0.36)
+    add(g, new ConeGeometry(0.06, 0.12, 3), black(), 0, 0.46, 0.4, Math.PI, 0, 0)
+    for (let i = 0; i < 6; i++) add(g, B(0.05, 0.08, 0.04), plain('#eefcff', 0.3), -0.13 + i * 0.052, 0.3, 0.38)
+    return g
+  },
+  sword() {
+    const g = new Group()
+    add(g, B(0.08, 1.2, 0.02), silver(), 0, 0.95, 0)
+    add(g, new ConeGeometry(0.057, 0.2, 4), silver(), 0, 1.65, 0, 0, Math.PI / 4, 0, [1, 1, 0.25])
+    add(g, B(0.5, 0.07, 0.1), gold(), 0, 0.33, 0)
+    add(g, cyl(0.04, 0.04, 0.3, 10), plain('#3a1d4f', 0.7), 0, 0.15, 0)
+    add(g, sph(0.07, 12, 10), gem('#ff1f4f', 0.9), 0, 0, 0)
+    add(g, new OctahedronGeometry(0.05, 0), gem('#2dc6ff', 0.9), 0, 0.33, 0.06)
+    add(g, cyl(0.3, 0.32, 0.06, 20), plain('#4a2b1a', 0.6), 0, -0.05, 0)
+    return g
+  },
+  meteor() {
+    const g = new Group()
+    const rock = mat('meteorrock', () => new MeshStandardMaterial({ color: '#3a2f3a', roughness: 0.9, flatShading: true }))
+    add(g, new DodecahedronGeometry(0.5, 1), rock, 0, 0.5, 0, 0.3, 0.5, 0, [1, 0.85, 0.95])
+    const lava = glow('#ff6a1f', 2.8)
+    const r = mulberry32(23)
+    for (let i = 0; i < 9; i++) {
+      const a = r() * Math.PI * 2
+      const b = r() * Math.PI
+      add(g, new OctahedronGeometry(0.09 + r() * 0.06, 0), lava, Math.cos(a) * Math.sin(b) * 0.45, 0.5 + Math.cos(b) * 0.4, Math.sin(a) * Math.sin(b) * 0.45)
+    }
+    return g
+  },
+  globe() {
+    const g = new Group()
+    const map = canvasMat('globemap', 256, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#2a7fd8'
+      ctx.fillRect(0, 0, w, h)
+      ctx.fillStyle = '#ffc531'
+      const r = mulberry32(31)
+      for (let i = 0; i < 14; i++) {
+        ctx.beginPath()
+        ctx.ellipse(r() * w, 20 + r() * (h - 40), 12 + r() * 26, 8 + r() * 16, r(), 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }, { metalness: 0.5, roughness: 0.3 })
+    add(g, sph(0.42, 32, 20), map, 0, 0.78, 0, 0.4, 0, 0)
+    add(g, tor(0.5, 0.03, 8, 40, Math.PI * 1.4), gold(), 0, 0.78, 0, 0, Math.PI / 2, -0.4)
+    add(g, cyl(0.04, 0.06, 0.3, 10), gold(), 0, 0.2, 0)
+    add(g, cyl(0.3, 0.34, 0.08, 24), gold(), 0, 0.04, 0)
+    return g
+  },
+  lamp() {
+    const g = new Group()
+    const body = add(g, sph(0.34, 24, 16), gold(), 0, 0.32, 0, 0, 0, 0, [1.25, 0.6, 0.9])
+    body.castShadow = true
+    add(g, new ConeGeometry(0.1, 0.6, 12), gold(), 0.5, 0.42, 0, 0, 0, -1.1)
+    add(g, tor(0.14, 0.04, 8, 20, Math.PI * 1.3), gold(), -0.46, 0.36, 0, 0, 0, Math.PI / 2)
+    add(g, cyl(0.16, 0.22, 0.1, 20), gold(), 0, 0.53, 0)
+    add(g, sph(0.08, 12, 10), gem('#8a2dff', 0.8), 0, 0.62, 0)
+    for (let i = 0; i < 5; i++) add(g, sph(0.09 + i * 0.03, 12, 10), glow('#b46bff', 1.4), 0.78 + i * 0.05, 0.7 + i * 0.16, 0)
+    add(g, cyl(0.2, 0.26, 0.06, 20), darkGold(), 0, 0.03, 0)
+    return g
+  },
+  halo() {
+    const g = new Group()
+    add(g, tor(0.36, 0.07, 12, 48), glow('#fff2b0', 2.6), 0, 1.15, 0, Math.PI / 2)
+    const wing = new Group()
+    for (let i = 0; i < 5; i++) add(wing, sph(0.22, 14, 10), plain('#ffffff', 0.6), 0.25 + i * 0.13, 0.55 + i * 0.1, 0, 0, 0, 0.5, [1.3, 0.35, 0.3])
+    g.add(wing)
+    const w2 = wing.clone()
+    w2.scale.x = -1
+    g.add(w2)
+    add(g, cyl(0.04, 0.04, 0.6, 8), gold(), 0, 0.6, 0)
+    add(g, cyl(0.3, 0.34, 0.08, 24), gold(), 0, 0.04, 0)
+    return g
+  },
+  feather() {
+    const g = new Group()
+    add(g, cyl(0.02, 0.025, 1.4, 8), gold(), 0, 0.75, 0, 0, 0, 0.2)
+    for (let i = 0; i < 12; i++) {
+      const t = i / 11
+      const c = ['#ffe14d', '#ff9a1f', '#ff3b1f'][Math.min(2, Math.floor(t * 3))]
+      for (const sx of [-1, 1]) add(g, B(0.3 * (1 - Math.abs(t - 0.5)) + 0.08, 0.08, 0.02), glow(c, 1.6), -0.14 * t + sx * 0.14, 0.3 + t * 1.1, 0, 0, 0, sx * -0.6 + 0.2)
+    }
+    add(g, cyl(0.28, 0.3, 0.06, 20), plain('#3a1d4f', 0.6), 0, 0.03, 0)
+    return g
+  },
+  harp() {
+    const g = new Group()
+    add(g, tor(0.55, 0.06, 10, 40, Math.PI * 0.75), gold(), 0, 0.2, 0, 0, 0, Math.PI * 0.35)
+    add(g, cyl(0.05, 0.06, 1.1, 10), gold(), -0.35, 0.65, 0, 0, 0, 0.12)
+    add(g, B(0.7, 0.08, 0.12), gold(), 0, 0.1, 0)
+    for (let i = 0; i < 8; i++) add(g, cyl(0.008, 0.008, 0.25 + i * 0.08, 4), glow('#fff2b0', 1.5), -0.28 + i * 0.07, 0.25 + (0.25 + i * 0.08) / 2, 0)
+    add(g, sph(0.08, 12, 10), gem('#2dc6ff', 0.8), -0.38, 1.22, 0)
+    return g
+  },
+  sunstone() {
+    const g = new Group()
+    add(g, sph(0.36, 28, 20), glow('#ffb31a', 2.4), 0, 0.72, 0)
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2
+      add(g, new ConeGeometry(0.07, 0.3, 6), glow('#ffe14d', 2.2), Math.cos(a) * 0.5, 0.72 + Math.sin(a) * 0.5, 0, 0, 0, a - Math.PI / 2)
+    }
+    add(g, cyl(0.05, 0.08, 0.3, 10), gold(), 0, 0.2, 0)
+    add(g, cyl(0.28, 0.32, 0.08, 20), gold(), 0, 0.04, 0)
+    return g
+  },
+  moon() {
+    const g = new Group()
+    const pts = []
+    for (let i = 0; i <= 24; i++) {
+      const a = -Math.PI / 2 + (i / 24) * Math.PI
+      pts.push([Math.cos(a) * 0.55, Math.sin(a) * 0.55])
+    }
+    for (let i = 24; i >= 0; i--) {
+      const a = -Math.PI / 2 + (i / 24) * Math.PI
+      pts.push([Math.cos(a) * 0.3 + 0.08, Math.sin(a) * 0.45])
+    }
+    const shape = new Shape(pts.map(([x, y]) => new Vector2(x, y)))
+    const geo = new ExtrudeGeometry(shape, { depth: 0.18, bevelEnabled: true, bevelSize: 0.04, bevelThickness: 0.04, bevelSegments: 2 })
+    geo.translate(0, 0, -0.09)
+    add(g, geo, gem('#9ffbff', 0.9), 0, 0.75, 0)
+    for (let i = 0; i < 5; i++) add(g, new OctahedronGeometry(0.05, 0), glow('#ffffff', 3), -0.3 + i * 0.12, 0.3 + (i % 2) * 0.9, 0.2)
+    add(g, cyl(0.28, 0.3, 0.06, 20), plain('#1a1440', 0.6), 0, 0.03, 0)
+    return g
+  },
+  star() {
+    const g = new Group()
+    const pts = []
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + Math.PI / 2
+      const r = i % 2 ? 0.24 : 0.55
+      pts.push(new Vector2(Math.cos(a) * r, Math.sin(a) * r))
+    }
+    const geo = new ExtrudeGeometry(new Shape(pts), { depth: 0.2, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.06, bevelSegments: 2 })
+    geo.translate(0, 0, -0.1)
+    add(g, geo, glow('#ffe14d', 1.8), 0, 0.8, 0)
+    add(g, cyl(0.04, 0.06, 0.3, 10), plain('#5ff0ff', 0.4), 0, 0.15, 0)
+    add(g, cyl(0.26, 0.3, 0.06, 20), plain('#1a1440', 0.6), 0, 0.03, 0)
+    return g
+  },
+  galaxy() {
+    const g = new Group()
+    const space = canvasMat('galaxytex', 256, 128, (ctx, w, h) => {
+      const gr = ctx.createLinearGradient(0, 0, w, h)
+      gr.addColorStop(0, '#1a0b4a')
+      gr.addColorStop(0.5, '#8a2dff')
+      gr.addColorStop(1, '#1fb6ff')
+      ctx.fillStyle = gr
+      ctx.fillRect(0, 0, w, h)
+      const r = mulberry32(41)
+      ctx.fillStyle = '#ffffff'
+      for (let i = 0; i < 120; i++) ctx.fillRect(r() * w, r() * h, 1 + r() * 2, 1 + r() * 2)
+    }, { emissive: '#ffffff', emissiveIntensity: 0.6, roughness: 0.2 })
+    space.emissiveMap = space.map
+    add(g, sph(0.4, 32, 20), space, 0, 0.8, 0)
+    add(g, tor(0.6, 0.025, 8, 48), glow('#9ffbff', 2.5), 0, 0.8, 0, 1.2, 0, 0.3)
+    add(g, cyl(0.05, 0.08, 0.36, 10), silver(), 0, 0.22, 0)
+    add(g, cyl(0.28, 0.32, 0.08, 20), silver(), 0, 0.04, 0)
+    return g
+  },
+  blackhole() {
+    const g = new Group()
+    add(g, sph(0.32, 28, 20), mat('void', () => new MeshBasicMaterial({ color: '#000000' })), 0, 0.8, 0)
+    add(g, tor(0.55, 0.12, 12, 48), glow('#ff8a1f', 2.6), 0, 0.8, 0, Math.PI / 2 - 0.35, 0, 0, [1, 1, 0.25])
+    add(g, tor(0.72, 0.05, 8, 48), glow('#b46bff', 2.4), 0, 0.8, 0, Math.PI / 2 - 0.35, 0, 0, [1, 1, 0.3])
+    add(g, tor(0.36, 0.03, 8, 40), glow('#ffffff', 3), 0, 0.8, 0)
+    add(g, cyl(0.28, 0.32, 0.08, 20), black(), 0, 0.04, 0)
     return g
   },
   trophy() {

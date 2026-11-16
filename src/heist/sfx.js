@@ -4,6 +4,21 @@ let ctx = null
 let master = null
 let noiseBuf = null
 let zip = null
+// The portal's master_volume setting (0..1) and the mute an ad break asks for.
+let volume = 0.8
+let muted = false
+const MASTER_GAIN = 0.45 // the mix level at full volume
+const applyGain = () => {
+  if (master) master.gain.value = muted ? 0 : MASTER_GAIN * volume
+}
+export function setVolume(v) {
+  volume = Math.min(1, Math.max(0, Number(v) || 0))
+  applyGain()
+}
+export function setMuted(on) {
+  muted = !!on
+  applyGain()
+}
 
 function ensure() {
   if (ctx) return ctx
@@ -12,7 +27,7 @@ function ensure() {
     if (!AC) return null
     ctx = new AC()
     master = ctx.createGain()
-    master.gain.value = 0.45
+    applyGain()
     master.connect(ctx.destination)
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)
     const d = noiseBuf.getChannelData(0)

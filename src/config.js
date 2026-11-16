@@ -171,11 +171,29 @@ export const CAMERA = {
 // SDK setting keys this game listens for; registering a listener makes the control
 // appear in the portal's settings menu.
 export const SETTINGS = {
+  master_volume: { def: '80', type: 'number', min: 0, max: 100 }, // the sound effects (sfx.js); the game has no music
   graphics_quality: { def: DEFAULT_GRAPHICS, type: 'enum', values: ['Low', 'Medium', 'High', 'Ultra'] },
   camera_sensitivity: { def: '1', type: 'number', min: 0.1, max: 5 },
   show_fps: { def: 'false', type: 'bool' },
   fullscreen: { def: 'false', type: 'bool' },
 }
+
+// Hosted leaderboards, declared with leaderboard.define() right after init (ids are permanent: lowercase
+// a-z 0-9 _ -, max 32). The game SERVER reports the scores from its own copy of the progress (backend
+// constants.ts LEADERBOARD_BOARDS declares the same boards), the client never submits.
+export const LEADERBOARDS = [
+  { id: 'rebirths', label: 'Rebirths', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+  { id: 'earned', label: 'Cash earned', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+  { id: 'maxfloor', label: 'Highest floor', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+  { id: 'stolen', label: 'Treasures stolen', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+]
+// Screens for Boxity's screen ads: the world itself (gameplay banners stay off) and the HUD windows
+// (Upgrades, Tools, Index, Rebirth, Daily Gifts, Zipline), which open in the middle of the screen.
+// Boxity's own menu / pause / chat / death screens are not the game's.
+export const AD_SCREENS = { gameplay: {}, panel: {} }
+// The rewarded ad button (right HUD column): watch an ad, get cash worth `incomeSeconds` of the base's
+// income (at least `base`). Never premium currency. `placement` is lowercase letters, digits, hyphens.
+export const REWARDED_AD = { placement: 'free-cash', base: 5000, incomeSeconds: 300, cooldownSeconds: 300 }
 
 // The base rig, measured from player.glb: origin at the feet, 6.4 units tall at bind pose.
 export const RIG_HEIGHT = 6.4
@@ -292,7 +310,7 @@ export const BUILDING = {
   z: -75,
   halfW: 15,
   halfD: 11,
-  floors: 5,
+  floors: 50,
   floorH: 6,
   wall: 0.6,
   slab: 0.5,
@@ -317,7 +335,9 @@ export const ZIPLINE = {
   hang: 2.25, // feet below the cable while riding
 }
 
-// Bases in the hub: index BASE.player is the local player's; the others are empty for now.
+// Bases in the hub: one plot per player, and a room holds exactly this many players (6: backend
+// ROOM_MAX_CLIENTS; the server assigns each joining player a free plot). `player` is the plot you use
+// before the server has assigned one (offline play).
 export const BASE = {
   positions: [[-46, 47], [0, 47], [46, 47], [-46, 83], [0, 83], [46, 83]],
   player: 1,
@@ -337,7 +357,8 @@ export const STALLS = {
   sell: { x: 14, z: 13, title: 'Sell', awning: '#2bd94f', ring: '#2bff6a' },
 }
 
-// Rarities, lowest first. `glow` tints the light rays and sparkles under a treasure.
+// Rarities, lowest first. `glow` tints the light rays and sparkles under a treasure;
+// `outline` marks rarities whose dark name colour needs a white outline in the UI.
 export const RARITIES = [
   { id: 'common', name: 'Common', color: '#e6e6e6', glow: '#ffffff' },
   { id: 'uncommon', name: 'Uncommon', color: '#3ee66b', glow: '#6dff8e' },
@@ -345,96 +366,183 @@ export const RARITIES = [
   { id: 'epic', name: 'Epic', color: '#c24bff', glow: '#d27bff' },
   { id: 'legendary', name: 'Legendary', color: '#ffc21a', glow: '#ffd75a' },
   { id: 'mythic', name: 'Mythic', color: '#ff3d6e', glow: '#ff6a8f' },
+  { id: 'divine', name: 'Divine', color: '#fff2a8', glow: '#fff7d0' },
+  { id: 'celestial', name: 'Celestial', color: '#5ff0ff', glow: '#9ffbff' },
   { id: 'secret', name: 'Secret', color: '#1b1b1b', glow: '#ffffff', outline: '#ffffff' },
 ]
+// Colour to print a rarity's name in on dark UI.
+export const rarityTextColor = (r) => (r.outline ? '#ffffff' : r.color)
 
 // Treasures: value = sell price (and the worth shown in the building), luck = % added
 // to the base's luck when placed, income = $ per second on a base slot.
+// Values climb roughly x6 per rarity; income is about value / 60-100.
 export const TREASURES = [
-  { id: 'coin', name: 'Coin', rarity: 'common', value: 780, luck: 2, income: 8 },
-  { id: 'iron', name: 'Iron Bar', rarity: 'common', value: 900, luck: 3, income: 9 },
-  { id: 'dollar', name: 'Dollar', rarity: 'common', value: 1050, luck: 3, income: 10 },
-  { id: 'cashbag', name: 'Cash Bag', rarity: 'common', value: 1200, luck: 4, income: 12 },
-  { id: 'gem', name: 'Gem', rarity: 'uncommon', value: 4300, luck: 15, income: 45 },
-  { id: 'bracelet', name: 'Bracelet', rarity: 'uncommon', value: 4750, luck: 16, income: 52 },
-  { id: 'binoculars', name: 'Binoculars', rarity: 'uncommon', value: 5600, luck: 19, income: 104 },
-  { id: 'goblet', name: 'Silver Goblet', rarity: 'rare', value: 18500, luck: 25, income: 260 },
-  { id: 'watch', name: 'Pocket Watch', rarity: 'rare', value: 22000, luck: 28, income: 320 },
-  { id: 'necklace', name: 'Pearl Necklace', rarity: 'rare', value: 26000, luck: 30, income: 380 },
-  { id: 'goldbar', name: 'Gold Bar', rarity: 'epic', value: 170000, luck: 45, income: 2800 },
-  { id: 'amethyst', name: 'Amethyst', rarity: 'epic', value: 180000, luck: 46, income: 3000 },
-  { id: 'emerald', name: 'Emerald', rarity: 'epic', value: 200000, luck: 47, income: 3300 },
-  { id: 'diamond', name: 'Diamond', rarity: 'legendary', value: 1100000, luck: 70, income: 18000 },
-  { id: 'clam', name: 'Pearl Clam', rarity: 'legendary', value: 1300000, luck: 82.5, income: 21750 },
-  { id: 'crown', name: 'Royal Crown', rarity: 'legendary', value: 1600000, luck: 85, income: 26000 },
-  { id: 'musicbox', name: 'Music Box', rarity: 'mythic', value: 6500000, luck: 78.75, income: 98000 },
-  { id: 'ship', name: 'Bottled Ship', rarity: 'mythic', value: 7200000, luck: 88, income: 120000 },
-  { id: 'hourglass', name: 'Sands of Time', rarity: 'mythic', value: 8500000, luck: 91.5, income: 141750 },
-  { id: 'scepter', name: 'Royal Scepter', rarity: 'secret', value: 45000000, luck: 76, income: 730000 },
-  { id: 'fossil', name: 'Dino Fossil', rarity: 'secret', value: 48000000, luck: 77, income: 785000 },
-  { id: 'robot', name: 'Robot Head', rarity: 'secret', value: 55000000, luck: 80, income: 900000 },
-  { id: 'car', name: 'Gold Racer', rarity: 'secret', value: 60000000, luck: 82, income: 960000 },
+  // common (~1K)
+  { id: 'coin', name: 'Coin', rarity: 'common', value: 780, luck: 1, income: 8 },
+  { id: 'iron', name: 'Iron Bar', rarity: 'common', value: 900, luck: 1.5, income: 9 },
+  { id: 'copper', name: 'Copper Bar', rarity: 'common', value: 980, luck: 1.5, income: 10 },
+  { id: 'dollar', name: 'Dollar', rarity: 'common', value: 1050, luck: 2, income: 11 },
+  { id: 'cashbag', name: 'Cash Bag', rarity: 'common', value: 1200, luck: 2, income: 12 },
+  { id: 'silvercoin', name: 'Silver Coin', rarity: 'common', value: 1400, luck: 2.5, income: 14 },
+  { id: 'wallet', name: 'Fat Wallet', rarity: 'common', value: 1650, luck: 3, income: 17 },
+  // uncommon (~5K)
+  { id: 'gem', name: 'Gem', rarity: 'uncommon', value: 4300, luck: 5, income: 48 },
+  { id: 'bracelet', name: 'Bracelet', rarity: 'uncommon', value: 4750, luck: 5.5, income: 52 },
+  { id: 'topaz', name: 'Topaz', rarity: 'uncommon', value: 5100, luck: 6, income: 56 },
+  { id: 'binoculars', name: 'Binoculars', rarity: 'uncommon', value: 5600, luck: 6.5, income: 62 },
+  { id: 'perfume', name: 'Perfume', rarity: 'uncommon', value: 6100, luck: 7, income: 68 },
+  { id: 'camera', name: 'Old Camera', rarity: 'uncommon', value: 6800, luck: 7.5, income: 75 },
+  { id: 'ring', name: 'Gem Ring', rarity: 'uncommon', value: 7500, luck: 8, income: 84 },
+  // rare (~30K)
+  { id: 'goblet', name: 'Silver Goblet', rarity: 'rare', value: 22000, luck: 10, income: 300 },
+  { id: 'watch', name: 'Pocket Watch', rarity: 'rare', value: 25000, luck: 11, income: 340 },
+  { id: 'necklace', name: 'Pearl Necklace', rarity: 'rare', value: 28000, luck: 11.5, income: 380 },
+  { id: 'vase', name: 'Ming Vase', rarity: 'rare', value: 31000, luck: 12, income: 420 },
+  { id: 'coinpile', name: 'Coin Pile', rarity: 'rare', value: 34000, luck: 12.5, income: 460 },
+  { id: 'sapphire', name: 'Sapphire', rarity: 'rare', value: 38000, luck: 13, income: 510 },
+  { id: 'mask', name: 'Carnival Mask', rarity: 'rare', value: 42000, luck: 14, income: 560 },
+  // epic (~200K)
+  { id: 'goldbar', name: 'Gold Bar', rarity: 'epic', value: 170000, luck: 18, income: 2700 },
+  { id: 'amethyst', name: 'Amethyst', rarity: 'epic', value: 180000, luck: 19, income: 2900 },
+  { id: 'emerald', name: 'Emerald', rarity: 'epic', value: 200000, luck: 20, income: 3200 },
+  { id: 'chest', name: 'Treasure Chest', rarity: 'epic', value: 215000, luck: 21, income: 3450 },
+  { id: 'ruby', name: 'Ruby', rarity: 'epic', value: 230000, luck: 22, income: 3700 },
+  { id: 'idol', name: 'Golden Idol', rarity: 'epic', value: 250000, luck: 23, income: 4000 },
+  { id: 'egg', name: 'Jeweled Egg', rarity: 'epic', value: 275000, luck: 25, income: 4400 },
+  // legendary (~1.5M)
+  { id: 'diamond', name: 'Diamond', rarity: 'legendary', value: 1100000, luck: 30, income: 17500 },
+  { id: 'clam', name: 'Pearl Clam', rarity: 'legendary', value: 1300000, luck: 32, income: 21000 },
+  { id: 'crown', name: 'Royal Crown', rarity: 'legendary', value: 1500000, luck: 34, income: 24000 },
+  { id: 'skull', name: 'Crystal Skull', rarity: 'legendary', value: 1650000, luck: 36, income: 26500 },
+  { id: 'sword', name: 'Jeweled Sword', rarity: 'legendary', value: 1800000, luck: 38, income: 29000 },
+  { id: 'meteor', name: 'Meteorite', rarity: 'legendary', value: 2000000, luck: 40, income: 32000 },
+  // mythic (~9M)
+  { id: 'musicbox', name: 'Music Box', rarity: 'mythic', value: 7000000, luck: 45, income: 112000 },
+  { id: 'ship', name: 'Bottled Ship', rarity: 'mythic', value: 8000000, luck: 48, income: 128000 },
+  { id: 'hourglass', name: 'Sands of Time', rarity: 'mythic', value: 9000000, luck: 51, income: 145000 },
+  { id: 'globe', name: 'Golden Globe', rarity: 'mythic', value: 10000000, luck: 54, income: 160000 },
+  { id: 'lamp', name: 'Magic Lamp', rarity: 'mythic', value: 11500000, luck: 58, income: 185000 },
+  // divine (~55M)
+  { id: 'halo', name: 'Angel Halo', rarity: 'divine', value: 45000000, luck: 70, income: 720000 },
+  { id: 'feather', name: 'Phoenix Feather', rarity: 'divine', value: 52000000, luck: 75, income: 830000 },
+  { id: 'grail', name: 'Holy Grail', rarity: 'divine', value: 58000000, luck: 80, income: 930000 },
+  { id: 'harp', name: 'Golden Harp', rarity: 'divine', value: 64000000, luck: 85, income: 1020000 },
+  { id: 'sunstone', name: 'Sunstone', rarity: 'divine', value: 72000000, luck: 90, income: 1150000 },
+  // celestial (~350M)
+  { id: 'moon', name: 'Moon Shard', rarity: 'celestial', value: 280000000, luck: 100, income: 4600000 },
+  { id: 'star', name: 'Fallen Star', rarity: 'celestial', value: 320000000, luck: 110, income: 5200000 },
+  { id: 'comet', name: 'Comet Core', rarity: 'celestial', value: 360000000, luck: 118, income: 5900000 },
+  { id: 'galaxy', name: 'Galaxy Orb', rarity: 'celestial', value: 400000000, luck: 126, income: 6500000 },
+  // secret (~2B)
+  { id: 'scepter', name: 'Royal Scepter', rarity: 'secret', value: 1800000000, luck: 150, income: 30000000 },
+  { id: 'fossil', name: 'Dino Fossil', rarity: 'secret', value: 2000000000, luck: 160, income: 33000000 },
+  { id: 'robot', name: 'Robot Head', rarity: 'secret', value: 2200000000, luck: 170, income: 36000000 },
+  { id: 'car', name: 'Gold Racer', rarity: 'secret', value: 2500000000, luck: 180, income: 41000000 },
+  { id: 'blackhole', name: 'Black Hole', rarity: 'secret', value: 3000000000, luck: 200, income: 50000000 },
   // Daily Gift exclusives (exclusive: never rolled in the tower)
-  { id: 'trophy', name: 'Golden Trophy', rarity: 'legendary', value: 1800000, luck: 88, income: 30000, exclusive: true },
-  { id: 'barrel', name: 'Nuclear Barrel', rarity: 'secret', value: 80000000, luck: 95, income: 1250000, exclusive: true },
+  { id: 'trophy', name: 'Golden Trophy', rarity: 'legendary', value: 2400000, luck: 42, income: 38000, exclusive: true },
+  { id: 'barrel', name: 'Nuclear Barrel', rarity: 'mythic', value: 15000000, luck: 62, income: 240000, exclusive: true },
 ]
 
-// Floors, ground first. weights = chance per rarity (RARITIES order) before luck;
-// doorHP = hit points of the door at the top of the stairs INTO this floor (0 = none);
-// luckSign = the clover multiplier painted on the floor's wall.
-export const FLOORS = [
-  { name: 'Lobby', doorHP: 0, luckSign: 1, weights: [70, 25, 5, 0.4, 0, 0, 0], wall: '#6d6be0', floor: '#b9b3e6' },
-  { name: 'Offices', doorHP: 25, luckSign: 2, weights: [38, 36, 19, 6, 0.9, 0.08, 0], wall: '#6461d6', floor: '#b0aee6' },
-  { name: 'Vault Lounge', doorHP: 80, luckSign: 3, weights: [12, 30, 32, 18, 6, 1, 0.08], wall: '#5f57cf', floor: '#aaa4e2' },
-  { name: 'Gallery', doorHP: 250, luckSign: 4, weights: [0, 12, 30, 32, 18, 6, 1], wall: '#584ec8', floor: '#a49cdf' },
-  { name: 'Penthouse', doorHP: 800, luckSign: 5, weights: [0, 0, 12, 34, 32, 16, 5], wall: '#5246c0', floor: '#9e94dc' },
+// --- Floors (generated) -------------------------------------------------------------------
+// Rarity odds per floor: a bell curve over the rarity tiers whose centre climbs from
+// Common on floor 1 to `topCenter` on the top floor; luck pushes the centre further up
+// by LUCK_SHIFT * log2(1 + luck% / 100) tiers. The last tier (Secret) is scaled by
+// secretWeight so it stays rare even at the top.
+export const FLOOR_ODDS = { topCenter: 7.4, spread: 1.0, secretWeight: 0.35 }
+export const LUCK_SHIFT = 0.6
+// Interior palettes (cycled). The ground floor is always the Lobby (theme 0).
+const THEMES = [
+  { name: 'Lobby', wall: '#6d6be0', floor: '#b9b3e6' },
+  { name: 'Offices', wall: '#6461d6', floor: '#b0aee6' },
+  { name: 'Vault Lounge', wall: '#5f57cf', floor: '#aaa4e2' },
+  { name: 'Gallery', wall: '#584ec8', floor: '#a49cdf' },
+  { name: 'Penthouse', wall: '#5246c0', floor: '#9e94dc' },
 ]
-// Luck: every rarity tier above Common has its weight multiplied by
-// (1 + luck% / 100 * LUCK_POWER) ^ tier, so luck shifts rolls toward the rare end.
-export const LUCK_POWER = 0.35
+export const FLOOR_COUNT = 50
+// Door into floor f (1-based, f >= 2): doorBase * doorGrowth ^ (f - 2) hit points.
+export const DOORS = { base: 20, growth: 1.3 }
+export const FLOORS = Array.from({ length: FLOOR_COUNT }, (_, i) => {
+  const theme = i === 0 ? 0 : 1 + ((i - 1) % 4)
+  return {
+    ...THEMES[theme],
+    theme,
+    doorHP: i === 0 ? 0 : Math.round(DOORS.base * Math.pow(DOORS.growth, i - 1)),
+    luckSign: i + 1,
+    center: (i / (FLOOR_COUNT - 1)) * FLOOR_ODDS.topCenter,
+  }
+})
 
 // Upgrades (all bought with cash, never premium currency).
 export const UPGRADES = {
-  carry: { start: 1, max: 6, costs: [1500, 12000, 75000, 450000, 2500000] }, // items held at once
-  base: { start: BASE.startSlots, step: 2, costs: [6000, 45000, 280000, 1600000] }, // slots unlocked
+  carry: { start: 1, max: 8, costs: [1500, 12000, 80000, 600000, 5000000, 50000000, 500000000] }, // items held at once
+  base: { start: BASE.startSlots, step: 2, costs: [6000, 60000, 600000, 6000000] }, // slots unlocked
 }
-// Tools break doors: damage per hit.
+// Tools break doors: damage per hit. Each one is "right" for a band of ~3-4 floors
+// (around 50 hits per door at HIT_INTERVAL).
 export const TOOLS = [
   { id: 'fists', name: 'Fists', damage: 1, cost: 0, color: '#f2c79a' },
   { id: 'bat', name: 'Wooden Bat', damage: 2, cost: 2500, color: '#b7814a' },
   { id: 'crowbar', name: 'Crowbar', damage: 5, cost: 20000, color: '#d23b3b' },
-  { id: 'sledge', name: 'Sledgehammer', damage: 12, cost: 150000, color: '#8a8f99' },
-  { id: 'jackhammer', name: 'Jackhammer', damage: 30, cost: 1200000, color: '#ffb31a' },
-  { id: 'plasma', name: 'Plasma Cutter', damage: 80, cost: 9000000, color: '#38e8ff' },
+  { id: 'hammer', name: 'Claw Hammer', damage: 12, cost: 120000, color: '#c9ced8' },
+  { id: 'sledge', name: 'Sledgehammer', damage: 30, cost: 700000, color: '#8a8f99' },
+  { id: 'axe', name: 'Fire Axe', damage: 75, cost: 4000000, color: '#ff5a3a' },
+  { id: 'drill', name: 'Power Drill', damage: 180, cost: 22000000, color: '#ffd21f' },
+  { id: 'jackhammer', name: 'Jackhammer', damage: 450, cost: 120000000, color: '#ffb31a' },
+  { id: 'saw', name: 'Diamond Saw', damage: 1100, cost: 650000000, color: '#bff6ff' },
+  { id: 'torch', name: 'Thermal Lance', damage: 2800, cost: 3500000000, color: '#ff8a1f' },
+  { id: 'plasma', name: 'Plasma Cutter', damage: 7000, cost: 18000000000, color: '#38e8ff' },
+  { id: 'laser', name: 'Laser Drill', damage: 18000, cost: 90000000000, color: '#ff2fd0' },
+  { id: 'ram', name: 'Quantum Ram', damage: 45000, cost: 450000000000, color: '#9b5bff' },
+  { id: 'gravity', name: 'Gravity Hammer', damage: 110000, cost: 2200000000000, color: '#ffffff' },
 ]
 export const HIT_INTERVAL = 0.3 // s between hits while E / the prompt is held
 
 // Police heat ("Jail Chance"): rises while on the heist bank, faster on higher floors;
 // at 100% the player is busted (carried loot lost, sent back to the hub).
 export const JAIL = {
-  risePerSecond: 0.4, // on the yard / ground floor
-  risePerFloor: 0.3, // extra %/s per floor above the ground
+  risePerSecond: 0.35, // on the yard / ground floor
+  risePerFloor: 0.026, // extra %/s per floor above the ground (floor 50: ~1.6%/s)
   decayPerSecond: 12, // back in the hub
-  steal: 3.5, // added per item stolen
-  glass: 2.5, // added per glass door smashed
-  hit: 0.18, // added per door hit
+  steal: 2.5, // added per item stolen
+  glass: 2, // added per glass door smashed
+  hit: 0.12, // added per door hit
   sirenAt: 70, // flashing lights from here
 }
+// Police cruisers patrolling the heist yard's roads: the west, back and east sides of the loop and the
+// two spurs into the cliff tunnels (they drive in, U-turn hidden inside the cliff and come back out),
+// never the front road by the building entrance / ground zipline tower (they U-turn at `endZ` before it).
+export const POLICE_PATROL = {
+  cars: 4,
+  tunnelDepth: 12, // m past the cliff face where a cruiser turns round inside a tunnel (out of sight)
+  speed: 7, // m/s on the straights
+  turnSpeed: 3.5, // m/s through U-turns and corners
+  lane: 1.5, // lane centre offset from the road centre (right-hand traffic)
+  cornerRadius: 4, // m, the fillet at the loop's back corners
+  endZ: -65, // the U-turn point on the west/east roads (front road starts at z = -61)
+  brakeDist: 6.5, // a cruiser stops when the player stands this close ahead of it
+  safeZ: -61, // the front road (z > safeZ) is never searched: searchlight spots stay behind it
+  // Roof searchlight: a spot on the ground sweeping side to side ahead of each cruiser. A player on
+  // the ground outside the building who stays in a spot for `catchTime` s is busted (spot turns red).
+  // Off while the police are asleep (Stop Police boost).
+  spot: { radius: 3.2, dist: 7.5, sweep: 0.75, sweepSpeed: 0.9, catchTime: 0.35 },
+}
+
 // Cash-priced boosts on the right of the HUD ("slightly high" cash prices).
 export const BOOSTS = {
   stopPolice: { seconds: 60, base: 3000, incomeSeconds: 40 },
-  randomTreasure: { base: 15000, incomeSeconds: 180, floor: 2 }, // rolled like a floor-3 spot (index 2), with your luck
+  randomTreasure: { base: 15000, incomeSeconds: 180, floor: 14 }, // rolled like a floor-15 spot, with your luck
 }
-// Timed spawns: when one runs out, the next restock puts that rarity on a top floor.
+// Timed spawns: when one runs out, that rarity appears on a floor at or above minFloor (0-based).
 export const TIMED_SPAWNS = [
-  { rarity: 'legendary', label: 'Legendary spawns in', seconds: 8 * 60, color: '#ffc21a', minFloor: 2 },
-  { rarity: 'mythic', label: 'Mythic spawns in', seconds: 14 * 60, color: '#ff3d6e', minFloor: 3 },
-  { rarity: 'secret', label: 'Secret spawns in', seconds: 22 * 60, color: '#ffffff', minFloor: 4 },
+  { rarity: 'legendary', label: 'Legendary spawns in', seconds: 6 * 60, color: '#ffc21a', minFloor: 14 },
+  { rarity: 'celestial', label: 'Celestial spawns in', seconds: 15 * 60, color: '#5ff0ff', minFloor: 34 },
+  { rarity: 'secret', label: 'Secret spawns in', seconds: 25 * 60, color: '#ffffff', minFloor: 42 },
 ]
 // Rebirth: trade ALL your cash (once you have at least the cost) for a permanent cash
 // multiplier on base income and sales. multiplier = 1 + step * rebirths;
 // cost = baseCost * costGrowth ^ rebirths. Items, slots, tools and upgrades are kept.
-export const REBIRTH = { baseCost: 500000, costGrowth: 3, step: 0.5 }
+export const REBIRTH = { baseCost: 1000000, costGrowth: 3.5, step: 0.5 }
 // Daily Gifts: a new day unlocks every `dayHours` of play-time calendar (checked while
 // playing and on load); claim each unlocked day once. After day 7 is claimed the cycle
 // restarts. "Claim All" (premium currency in the reference) is CASH here: the unclaimed
@@ -446,10 +554,31 @@ export const DAILY = {
     { cash: 10000 },
     { item: 'trophy' },
     { cash: 250000 },
-    { item: 'scepter' },
+    { item: 'egg' },
     { cash: 5000000 },
-    { item: 'robot' },
+    { item: 'lamp' },
     { item: 'barrel' },
   ],
 }
+// The browser's own copy of the save: the offline fallback, and the first server save of a new account.
 export const SAVE_KEY = 'risky-heist-save-v1'
+
+// Colyseus game server (../Risky-heist-backend), one URL per Bloxity Legion channel: `npm run build`
+// (production) reads _MAIN, `npm run dev` and `npm run build:dev` read _DEV (`npm run dev` defaults to
+// the local server). Empty = net.js asks the Bloxity SDK for the channel's endpoint; with no SDK either
+// the game runs offline on the local save only.
+const SERVER_URL_DEV = import.meta.env.VITE_SERVER_URL_DEV || (import.meta.env.DEV ? 'ws://localhost:2567' : '')
+const SERVER_URL_MAIN = import.meta.env.VITE_SERVER_URL_MAIN || ''
+export const SERVER_URL = import.meta.env.MODE === 'production' ? SERVER_URL_MAIN : SERVER_URL_DEV
+export const NET = {
+  poseHz: 12, // pose messages per second (only when the pose changed)
+  remoteLerp: 12, // 1/s: how fast another player's character eases toward their last reported pose
+  remoteSnap: 25, // m: a bigger jump (zipline, teleport) snaps instead of sliding
+  remoteRange: 70, // m: only players this close are drawn (and animated, and their look loaded)
+  remoteRangeSlack: 10, // m of hysteresis: a drawn player disappears only beyond range + slack
+  remoteNameHeight: 0.55, // m above the character's head for the name tag
+  saveEvery: 8, // s: at most one save to the server per this (the local copy is written every ~6 s)
+  retryMax: 15, // s: the longest wait between connection attempts (they back off 1, 2, 4, 8, 15, ...)
+  giveUpAfter: 60, // s of failed attempts before pausing (a cold server can take ~45 s to wake)
+  retryPause: 30, // s to wait before starting the attempts over
+}

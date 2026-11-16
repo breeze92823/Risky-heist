@@ -3,9 +3,9 @@
 // its fenced heist yard (road loop, police cruisers, ground zipline tower,
 // tunnels) and terraced toy-brick cliffs with voxel trees round everything.
 // Static meshes are baked into a few draw calls; sprites and animated parts stay live.
-import { BoxGeometry, Group, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial, PlaneGeometry, PointLight, Quaternion, Vector3 } from 'three'
+import { AdditiveBlending, BoxGeometry, BufferAttribute,CircleGeometry, Color, ConeGeometry, CylinderGeometry, DoubleSide, Group, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial, PlaneGeometry, PointLight, Quaternion, ShaderMaterial, Vector3 } from 'three'
 import { bake } from '../bake.js'
-import { BASE, LAYOUT, STALLS, ZIPLINE } from '../config.js'
+import { BASE, LAYOUT, POLICE_PATROL, STALLS, ZIPLINE } from '../config.js'
 import { mulberry32 } from '../textures.js'
 import { asphalt, box, boxGeo, boxMM, bricks, canvasSign, cliff, emissive, glass, groundDecal, infoLabel, metal, outlinedText, plainTex, ringTexture, roundRect, solid, solidMM, studs } from './kit.js'
 import { paintLeaves, paintStripes } from './paint.js'
@@ -109,37 +109,406 @@ function fence(root, x0, z0, x1, z1, color = '#3f7bff', h = 1.1) {
   for (const y of [h * 0.45, h * 0.92]) box(root, len, 0.16, 0.16, solid('#9fc1ff', 0.4), (x0 + x1) / 2, y, (z0 + z1) / 2, { rotY: yaw })
 }
 
-// A parked police cruiser with a light bar (bar materials returned for blinking).
-function cruiser(root, live, x, z, rotY, bars) {
-  const g = new Group()
-  g.position.set(x, 0, z)
-  g.rotation.y = rotY
-  const white = solid('#f4f6fb', 0.35, 0.2)
-  const blackPaint = solid('#1a1c25', 0.35, 0.3)
-  box(g, 4.4, 0.7, 2.0, blackPaint, 0, 0.75, 0)
-  box(g, 2.2, 0.72, 2.02, white, 0, 0.76, 0)
-  box(g, 2.3, 0.75, 1.8, glass('#1e2a44', 0.85), -0.2, 1.45, 0)
-  box(g, 2.0, 0.12, 1.7, white, -0.2, 1.86, 0)
-  for (const [dx, dz] of [[1.4, 1], [1.4, -1], [-1.4, 1], [-1.4, -1]]) {
-    const w = box(g, 0.75, 0.75, 0.3, solid('#111216', 0.8), dx, 0.4, dz)
-    w.rotation.x = 0
+// "POLICE" + star door decal (one canvas texture shared by every cruiser).
+let doorDecalMat = null
+function doorDecal() {
+  if (doorDecalMat) return doorDecalMat
+  const c = document.createElement('canvas')
+  c.width = 512
+  c.height = 128
+  const ctx = c.getContext('2d')
+  // gold star badge
+  ctx.save()
+  ctx.translate(62, 64)
+  ctx.beginPath()
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 22 : 50
+    const a = (i / 10) * Math.PI * 2 - Math.PI / 2
+    ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r)
   }
-  box(g, 0.1, 0.18, 0.5, emissive('#fff6c2', 2.5), 2.21, 0.85, 0.6)
-  box(g, 0.1, 0.18, 0.5, emissive('#fff6c2', 2.5), 2.21, 0.85, -0.6)
-  root.add(g)
-  // light bar stays live (blinks)
+  ctx.closePath()
+  ctx.fillStyle = '#ffcc33'
+  ctx.strokeStyle = '#7a5200'
+  ctx.lineWidth = 6
+  ctx.fill()
+  ctx.stroke()
+  ctx.restore()
+  outlinedText(ctx, 'POLICE', 300, 68, 92, '#14214d', '#ffffff', 800)
+  doorDecalMat = new MeshStandardMaterial({ map: plainTex(c), transparent: true, alphaTest: 0.35, roughness: 0.4 })
+  return doorDecalMat
+}
+
+const paintMat = new MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 })
+const wheelGeo = new CylinderGeometry(0.4, 0.4, 0.32, 18).rotateX(Math.PI / 2)
+const hubGeo = new CylinderGeometry(0.22, 0.22, 0.34, 12).rotateX(Math.PI / 2)
+const lampGeo = new CylinderGeometry(0.13, 0.15, 0.32, 14).rotateZ(Math.PI / 2)
+const lensGeo = new CylinderGeometry(0.11, 0.11, 0.03, 14).rotateZ(Math.PI / 2)
+
+// A police cruiser (its nose is local +x): black-and-white body, sloped glass, push bar, wheels with
+// hubcaps, door decals, light bar and a roof searchlight. The body is baked to a few meshes and the
+// whole car is one live Group so it can drive. Bar materials are pushed to `bars` for blinking.
+// Returns { car, aim (searchlight yaw/pitch group), lens (its glowing material) }.
+function cruiser(live, bars) {
+  const g = new Group()
+  const white = solid('#f4f6fb', 0.3, 0.2)
+  const black = solid('#16181f', 0.3, 0.35)
+  const trim = solid('#0b0c10', 0.7)
+  const chrome = metal('#c9ced8', 0.25)
+  const darkGlass = glass('#1a2740', 0.88)
+  const rot = (m, z) => {
+    m.rotation.z = z
+    return m
+  }
+  // body: chassis, hood, doors, trunk, arches, stripe
+  box(g, 4.5, 0.42, 1.86, black, 0, 0.62, 0)
+  box(g, 1.1, 0.36, 1.86, black, 1.7, 1.01, 0)
+  box(g, 2.15, 0.44, 1.9, white, 0.075, 1.05, 0)
+  box(g, 1.25, 0.42, 1.86, black, -1.625, 1.04, 0)
+  for (const x of [1.45, -1.45]) box(g, 1.05, 0.16, 1.94, trim, x, 0.88, 0)
+  box(g, 2.17, 0.06, 1.92, solid('#1f5fff', 0.4), 0.075, 0.9, 0)
+  // cabin: glass box, sloped windshield + rear window, roof, pillars, sill
+  box(g, 1.8, 0.6, 1.72, darkGlass, -0.15, 1.57, 0)
+  rot(box(g, 0.06, 0.72, 1.7, darkGlass, 0.95, 1.55, 0), 0.75)
+  rot(box(g, 0.06, 0.66, 1.7, darkGlass, -1.25, 1.55, 0), -0.75)
+  box(g, 1.75, 0.09, 1.74, white, -0.15, 1.91, 0)
+  box(g, 1.82, 0.05, 1.76, trim, -0.15, 1.3, 0)
+  for (const z of [0.86, -0.86]) box(g, 0.12, 0.6, 0.04, trim, -0.15, 1.57, z)
+  // door seam, handles, mirrors, decals
+  box(g, 0.03, 0.42, 1.92, trim, 0.1, 1.05, 0)
+  for (const x of [0.5, -0.38]) box(g, 0.16, 0.05, 1.94, chrome, x, 1.18, 0)
+  for (const z of [1.02, -1.02]) box(g, 0.18, 0.14, 0.14, trim, 0.72, 1.35, z)
+  const decalGeo = new PlaneGeometry(1.7, 0.42)
+  const d1 = new Mesh(decalGeo, doorDecal())
+  d1.position.set(0.07, 1.06, 0.956)
+  const d2 = new Mesh(decalGeo, doorDecal())
+  d2.position.set(0.07, 1.06, -0.956)
+  d2.rotation.y = Math.PI
+  g.add(d1, d2)
+  // front: bumper, grille, headlights, plate, push bar
+  box(g, 0.22, 0.3, 1.96, solid('#2a2d36', 0.6), 2.3, 0.62, 0)
+  box(g, 0.04, 0.2, 0.9, trim, 2.26, 0.98, 0)
+  for (const z of [0.68, -0.68]) box(g, 0.06, 0.16, 0.42, emissive('#fff6c2', 2.5), 2.26, 1.0, z)
+  box(g, 0.03, 0.16, 0.42, solid('#f2f2f2', 0.5), 2.42, 0.62, 0)
+  for (const z of [0.36, -0.36]) {
+    box(g, 0.08, 0.55, 0.08, trim, 2.55, 0.78, z)
+    box(g, 0.28, 0.06, 0.06, trim, 2.42, 0.62, z)
+  }
+  for (const y of [0.6, 0.98]) box(g, 0.08, 0.07, 0.9, trim, 2.55, y, 0)
+  // back: bumper, taillights, plate, antenna
+  box(g, 0.22, 0.3, 1.96, solid('#2a2d36', 0.6), -2.3, 0.62, 0)
+  for (const z of [0.7, -0.7]) box(g, 0.06, 0.18, 0.36, emissive('#ff2a2a', 2.2), -2.26, 1.05, z)
+  box(g, 0.03, 0.16, 0.42, solid('#f2f2f2', 0.5), -2.42, 0.62, 0)
+  box(g, 0.03, 0.7, 0.03, trim, -1.9, 1.6, -0.6)
+  // wheels + hubcaps
+  for (const [x, z] of [[1.45, 0.86], [1.45, -0.86], [-1.45, 0.86], [-1.45, -0.86]]) {
+    const w = new Mesh(wheelGeo, solid('#111216', 0.85))
+    w.position.set(x, 0.4, z)
+    const h = new Mesh(hubGeo, chrome)
+    h.position.set(x, 0.4, z)
+    g.add(w, h)
+  }
+  // light bar base + clear centre
+  box(g, 0.36, 0.08, 1.5, trim, -0.35, 1.99, 0)
+  box(g, 0.3, 0.14, 0.24, emissive('#ffffff', 0.8, '#d8dde8'), -0.35, 2.1, 0)
+  // searchlight mount
+  box(g, 0.16, 0.08, 0.16, trim, 0.45, 1.99, 0)
+
+  // plain painted parts share one vertex-coloured material so the bake merges them into one draw call
+  const paint = [white, black, trim, solid('#1f5fff', 0.4), solid('#2a2d36', 0.6), solid('#f2f2f2', 0.5), solid('#111216', 0.85)]
+  g.traverse((o) => {
+    if (!o.isMesh || !paint.includes(o.material)) return
+    const c = o.material.color
+    o.geometry = o.geometry === wheelGeo ? wheelGeo.clone() : o.geometry
+    const n = o.geometry.attributes.position.count
+    const col = new Float32Array(n * 3)
+    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3)
+    o.geometry.setAttribute('color', new BufferAttribute(col, 3))
+    o.material = paintMat
+  })
+  const car = bake(g, true)
+  car.traverse((o) => {
+    if (o.isMesh) o.receiveShadow = true
+  })
+  // light bar stays its own meshes (blinks)
   const red = new MeshStandardMaterial({ color: '#330000', emissive: '#ff1f2f', emissiveIntensity: 3 })
   const blue = new MeshStandardMaterial({ color: '#000533', emissive: '#1f6bff', emissiveIntensity: 3 })
-  const lb = new Group()
-  lb.position.set(x, 0, z)
-  lb.rotation.y = rotY
-  const a = new Mesh(boxGeo(0.4, 0.18, 0.7), red)
-  a.position.set(-0.2, 2.01, 0.38)
-  const b = new Mesh(boxGeo(0.4, 0.18, 0.7), blue)
-  b.position.set(-0.2, 2.01, -0.38)
-  lb.add(a, b)
-  live.add(lb)
+  const a = new Mesh(boxGeo(0.32, 0.16, 0.6), red)
+  a.position.set(-0.35, 2.11, 0.44)
+  const b = new Mesh(boxGeo(0.32, 0.16, 0.6), blue)
+  b.position.set(-0.35, 2.11, -0.44)
+  // searchlight: yaw group on the roof, pitched housing + glowing lens
+  const aim = new Group()
+  aim.position.set(0.45, 2.12, 0)
+  const pitch = new Group()
+  const housing = new Mesh(lampGeo, metal('#2b2f3a', 0.35))
+  const lens = new MeshStandardMaterial({ color: '#fffbe0', emissive: '#fff3b0', emissiveIntensity: 4 })
+  const lensMesh = new Mesh(lensGeo, lens)
+  lensMesh.position.x = 0.17
+  pitch.add(housing, lensMesh)
+  aim.add(pitch)
+  car.add(a, b, aim)
+  live.add(car)
   bars.push(red, blue)
+  return { car, aim, pitch, lens }
+}
+
+// The searchlight's ground spot (soft disc, bright rim, rippling rings) and its beam (a cone fading
+// toward the ground). Additive, no depth write; uColor turns from white to red while a player is being spotted.
+const spotGeo = new CircleGeometry(1, 40).rotateX(-Math.PI / 2)
+const beamGeo = new ConeGeometry(1, 1, 24, 1, true).translate(0, -0.5, 0) // apex at the origin, base at y = -1
+const spotVert = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`
+function spotMaterial() {
+  return new ShaderMaterial({
+    uniforms: { uColor: { value: new Color('#fff1b8') }, uTime: { value: 0 } },
+    vertexShader: spotVert,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uTime;
+      varying vec2 vUv;
+      void main() {
+        float r = length(vUv - 0.5) * 2.0;
+        float disc = smoothstep(1.0, 0.86, r);
+        float rim = smoothstep(0.76, 0.9, r) * smoothstep(1.0, 0.91, r);
+        float rings = 0.5 + 0.5 * sin(r * 16.0 - uTime * 5.0);
+        float a = disc * (0.32 + 0.14 * rings * (1.0 - r)) + rim * 0.75;
+        gl_FragColor = vec4(uColor, a);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+  })
+}
+function beamMaterial() {
+  return new ShaderMaterial({
+    uniforms: { uColor: { value: new Color('#fff1b8') } },
+    vertexShader: spotVert,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      varying vec2 vUv;
+      void main() {
+        float a = 0.04 + 0.2 * vUv.y * vUv.y; // uv.y = 1 at the lamp, 0 at the ground
+        gl_FragColor = vec4(uColor, a);
+      }`,
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    blending: AdditiveBlending,
+  })
+}
+
+// The patrol route as a closed polyline of (x, z) corners, filleted and sampled every `step` m:
+// { xs, zs, turn (1 = on a bend), step, n, length }. Pure numbers so per-frame lookups allocate nothing.
+function sampleRoute(corners, radius, step = 0.25) {
+  const n = corners.length
+  const segs = [] // { kind: 'line', a, b } | { kind: 'arc', a, c, b } (quadratic bezier)
+  const fillets = corners.map((p, i) => {
+    const prev = corners[(i - 1 + n) % n]
+    const next = corners[(i + 1) % n]
+    const lin = Math.hypot(p[0] - prev[0], p[1] - prev[1])
+    const lout = Math.hypot(next[0] - p[0], next[1] - p[1])
+    const r = Math.min(radius, lin / 2, lout / 2)
+    const a = [p[0] - ((p[0] - prev[0]) / lin) * r, p[1] - ((p[1] - prev[1]) / lin) * r]
+    const b = [p[0] + ((next[0] - p[0]) / lout) * r, p[1] + ((next[1] - p[1]) / lout) * r]
+    return { a, c: p, b }
+  })
+  for (let i = 0; i < n; i++) {
+    const f = fillets[i]
+    segs.push({ kind: 'arc', a: f.a, c: f.c, b: f.b })
+    segs.push({ kind: 'line', a: f.b, b: fillets[(i + 1) % n].a })
+  }
+  // dense points, then resample at even arc length
+  const px = []
+  const pz = []
+  const pt = []
+  for (const s of segs) {
+    const k = s.kind === 'arc' ? 24 : Math.max(1, Math.ceil(Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) / step))
+    for (let j = 0; j < k; j++) {
+      const t = j / k
+      if (s.kind === 'arc') {
+        const u = 1 - t
+        px.push(u * u * s.a[0] + 2 * u * t * s.c[0] + t * t * s.b[0])
+        pz.push(u * u * s.a[1] + 2 * u * t * s.c[1] + t * t * s.b[1])
+        pt.push(1)
+      } else {
+        px.push(s.a[0] + (s.b[0] - s.a[0]) * t)
+        pz.push(s.a[1] + (s.b[1] - s.a[1]) * t)
+        pt.push(0)
+      }
+    }
+  }
+  const cum = [0]
+  for (let i = 1; i <= px.length; i++) {
+    const j = i % px.length
+    cum.push(cum[i - 1] + Math.hypot(px[j] - px[i - 1], pz[j] - pz[i - 1]))
+  }
+  const length = cum[cum.length - 1]
+  const count = Math.floor(length / step)
+  const xs = new Float32Array(count)
+  const zs = new Float32Array(count)
+  const turn = new Uint8Array(count)
+  let k = 0
+  for (let i = 0; i < count; i++) {
+    const d = i * step
+    while (cum[k + 1] < d) k++
+    const t = (d - cum[k]) / (cum[k + 1] - cum[k] || 1)
+    const j = (k + 1) % px.length
+    xs[i] = px[k] + (px[j] - px[k]) * t
+    zs[i] = pz[k] + (pz[j] - pz[k]) * t
+    turn[i] = pt[k]
+  }
+  return { xs, zs, turn, step: length / count, n: count, length }
+}
+
+// Police cruisers driving the yard roads: the west, back and east sides of the loop and both tunnel
+// spurs (never the front road by the building entrance and ground zipline tower). They drive into each
+// tunnel, U-turn out of sight inside the cliff and come back out, slow for bends, U-turn at
+// POLICE_PATROL.endZ, keep their distance from the car ahead and stop for a player in front of them.
+function createPatrol(live, bars, loop, spurZ, tunnelX) {
+  const P = POLICE_PATROL
+  const cw = (loop.x1 - loop.x0) / 2 - loop.w / 2 // west/east road centre |x|
+  const zb = loop.z0 + loop.w / 2 // back road centre z
+  const ln = P.lane
+  const T = tunnelX + P.tunnelDepth // U-turn point hidden inside the cliff
+  // Right-hand traffic, every bend a right turn: out of the west tunnel, up the outer west lane,
+  // U-turn, down the inner west lane, east along the back, up the inner east lane, U-turn, down the
+  // outer east lane into the east tunnel, U-turn inside, back out, down the outer east lane, west along
+  // the back, up the outer west lane into the west tunnel, U-turn inside.
+  const route = sampleRoute(
+    [
+      [-T, spurZ + ln],
+      [-cw - ln, spurZ + ln],
+      [-cw - ln, P.endZ],
+      [-cw + ln, P.endZ],
+      [-cw + ln, zb + ln],
+      [cw - ln, zb + ln],
+      [cw - ln, P.endZ],
+      [cw + ln, P.endZ],
+      [cw + ln, spurZ + ln],
+      [T, spurZ + ln],
+      [T, spurZ - ln],
+      [cw + ln, spurZ - ln],
+      [cw + ln, zb - ln],
+      [-cw - ln, zb - ln],
+      [-cw - ln, spurZ - ln],
+      [-T, spurZ - ln],
+    ],
+    P.cornerRadius,
+  )
+  const { xs, zs, turn, step, n, length } = route
+  const idx = (d) => ((Math.floor(d / step) % n) + n) % n
+  const S = P.spot
+  const cars = []
+  for (let i = 0; i < P.cars; i++) {
+    const { car, aim, pitch, lens } = cruiser(live, bars)
+    const spotMat = spotMaterial()
+    const beamMat = beamMaterial()
+    const spot = new Mesh(spotGeo, spotMat)
+    spot.scale.setScalar(S.radius)
+    spot.renderOrder = 3
+    const beam = new Mesh(beamGeo, beamMat)
+    beam.renderOrder = 4
+    live.add(spot, beam)
+    cars.push({ g: car, aim, pitch, lens, spot, beam, spotMat, beamMat, phase: i * 2.1, d: (length / P.cars) * i + 10, v: P.speed })
+  }
+  const look = Math.max(1, Math.round(1.2 / step)) // heading from samples +-1.2 m apart
+
+  function place(c) {
+    const i = idx(c.d)
+    const t = c.d / step - Math.floor(c.d / step)
+    const j = (i + 1) % n
+    const x = xs[i] + (xs[j] - xs[i]) * t
+    const z = zs[i] + (zs[j] - zs[i]) * t
+    const a = (i + look) % n
+    const b = (i - look + n) % n
+    c.g.position.set(x, 0, z)
+    c.g.rotation.y = Math.atan2(-(zs[a] - zs[b]), xs[a] - xs[b]) // nose (+x) along the route
+  }
+  cars.forEach(place)
+
+  const SAFE = new Color('#fff1b8')
+  const ALARM = new Color('#ff2a1a')
+  const DOWN = new Vector3(0, -1, 0)
+  const ray = new Vector3()
+  let seen = 0 // seconds the player has stood in a spot
+  let seenBy = null
+
+  // awake: false while the police are asleep (searchlights off). watch: the player can be caught now
+  // (on the heist bank, on the ground outside the building, not riding or already busted).
+  // Returns true the moment the player has been held in a spot for S.catchTime.
+  return function update(dt, t, playerPos, awake = true, watch = false) {
+    const ahead = Math.round(7 / step)
+    let inside = null
+    for (let k = 0; k < cars.length; k++) {
+      const c = cars[k]
+      const i = idx(c.d)
+      let target = P.speed
+      for (let s = 0; s <= ahead; s += 2) if (turn[(i + s) % n]) target = P.turnSpeed
+      // the car in front (along the route)
+      const front = cars[(k + 1) % cars.length]
+      if (front !== c && (((front.d - c.d) % length) + length) % length < 8) target = 0
+      const yaw = c.g.rotation.y
+      const fx = Math.cos(yaw)
+      const fz = -Math.sin(yaw)
+      // a player on the road in front
+      if (playerPos && playerPos.y < 3) {
+        const dx = playerPos.x - c.g.position.x
+        const dz = playerPos.z - c.g.position.z
+        const along = dx * fx + dz * fz
+        const side = Math.abs(dx * fz - dz * fx)
+        if (along > 0 && along < P.brakeDist && side < 1.8) target = 0
+      }
+      const acc = target < c.v ? 9 : 3
+      c.v += Math.sign(target - c.v) * Math.min(Math.abs(target - c.v), acc * dt)
+      c.d = (c.d + c.v * dt) % length
+      place(c)
+
+      // searchlight: sweeps side to side ahead of the car, never onto the front road (safe zone)
+      const on = awake && Math.abs(c.g.position.x) < tunnelX - 1
+      c.spot.visible = c.beam.visible = on
+      c.lens.emissiveIntensity = on ? 4 : 0.15
+      if (!on) continue
+      const y2 = c.g.rotation.y
+      const sweep = Math.sin(t * S.sweepSpeed + c.phase) * S.sweep
+      const sx = c.g.position.x + Math.cos(y2 + sweep) * S.dist
+      const sz = Math.min(c.g.position.z - Math.sin(y2 + sweep) * S.dist, P.safeZ - S.radius)
+      const lx = c.g.position.x + Math.cos(y2) * 0.45
+      const lz = c.g.position.z - Math.sin(y2) * 0.45
+      const ly = 2.12
+      c.aim.rotation.y = Math.atan2(-(sz - lz), sx - lx) - y2
+      c.pitch.rotation.z = -Math.atan2(ly, Math.hypot(sx - lx, sz - lz))
+      c.spot.position.set(sx, 0.16, sz)
+      ray.set(sx - lx, 0.16 - ly, sz - lz)
+      const len = ray.length()
+      c.beam.position.set(lx, ly, lz)
+      c.beam.quaternion.setFromUnitVectors(DOWN, ray.divideScalar(len))
+      c.beam.scale.set(S.radius * 0.95, len, S.radius * 0.95)
+      c.spotMat.uniforms.uTime.value = t
+      if (watch && playerPos && playerPos.y < 3 && playerPos.z < P.safeZ && Math.hypot(playerPos.x - sx, playerPos.z - sz) < S.radius * 0.92) inside = c
+    }
+    if (inside) {
+      seen += dt
+      seenBy = inside
+    } else seen = Math.max(0, seen - dt * 2)
+    const alarm = Math.min(1, seen / S.catchTime)
+    for (const c of cars) {
+      const col = c.spotMat.uniforms.uColor.value
+      col.copy(SAFE)
+      if (c === seenBy) col.lerp(ALARM, alarm)
+      c.beamMat.uniforms.uColor.value.copy(col)
+    }
+    if (seen >= S.catchTime) {
+      seen = 0
+      return true
+    }
+    return false
+  }
 }
 
 export function buildHub(scene) {
@@ -318,16 +687,9 @@ export function buildHub(scene) {
   const stalls = {}
   for (const [key, s] of Object.entries(STALLS)) stalls[key] = buildStall(root, live, s)
 
-  // --- Bases (the player's is index BASE.player; base.js adds its live parts) ------------
-  const baseSlots = []
-  BASE.positions.forEach(([bx, bz], i) => {
-    baseSlots.push(buildBaseShell(root, bx, bz, i === BASE.player))
-    if (i !== BASE.player) {
-      const tag = infoLabel([{ text: 'Empty Base', size: 56, color: '#d7d3ff' }, { text: 'Coming soon', size: 34, color: '#9f9acb' }], 0.028)
-      tag.position.set(bx, 3.2, bz - BASE.depth / 2 + 1)
-      live.add(tag)
-    }
-  })
+  // --- Bases: one plot per player in the room (BASE.positions); every shell looks the same, and
+  // base.js adds each plot's live parts (owner sign, loot) -- game.js decides whose is whose ------
+  const baseSlots = BASE.positions.map(([bx, bz]) => buildBaseShell(root, bx, bz, true))
 
   // --- Billboards: timed spawns (left), heist stats (right) --------------------------------
   const boardPost = metal('#2d3140', 0.5)
@@ -348,12 +710,16 @@ export function buildHub(scene) {
   const { yard } = LAYOUT
   fence(root, yard.minX, yard.maxZ - 1.2, yard.maxX, yard.maxZ - 1.2, '#3f7bff')
   fence(root, yard.minX, yard.minZ, yard.maxX, yard.minZ, '#7d7f8c', 1.6)
-  fence(root, yard.minX, yard.minZ, yard.minX, yard.maxZ - 1.2, '#7d7f8c', 1.6)
-  fence(root, yard.maxX, yard.minZ, yard.maxX, yard.maxZ - 1.2, '#7d7f8c', 1.6)
+  // west/east fences leave a gap where the road to each tunnel crosses them
+  const gap = { z0: -94, z1: -86 }
+  for (const x of [yard.minX, yard.maxX]) {
+    fence(root, x, yard.minZ, x, gap.z0, '#7d7f8c', 1.6)
+    fence(root, x, gap.z1, x, yard.maxZ - 1.2, '#7d7f8c', 1.6)
+    solidMM(x - 0.3, 0, yard.minZ, x + 0.3, 4, gap.z0)
+    solidMM(x - 0.3, 0, gap.z1, x + 0.3, 4, yard.maxZ)
+  }
   solidMM(yard.minX, 0, yard.maxZ - 1.5, yard.maxX, 4, yard.maxZ - 0.9)
   solidMM(yard.minX, 0, yard.minZ - 0.3, yard.maxX, 4, yard.minZ + 0.3)
-  solidMM(yard.minX - 0.3, 0, yard.minZ, yard.minX + 0.3, 4, yard.maxZ)
-  solidMM(yard.maxX - 0.3, 0, yard.minZ, yard.maxX + 0.3, 4, yard.maxZ)
   // road loop round the building + spurs to the tunnels
   const loop = { x0: -31, x1: 31, z0: -101, z1: -55, w: 6 }
   boxMM(root, loop.x0, 0, loop.z0, loop.x1, 0.07, loop.z0 + loop.w, road, { cast: false })
@@ -379,11 +745,9 @@ export function buildHub(scene) {
     boxMM(root, fx - sx * 0.2, 0, -97, fx + sx * 1.6, 9, -83, tunnelStone)
     boxMM(root, fx - sx * 0.3, 0.05, -94, fx + sx * 1.7, 6.5, -86, solid('#090814', 1))
   }
-  // police cruisers + street lamps on the bank
+  // police cruisers patrolling the loop + street lamps on the bank
   const bars = []
-  cruiser(root, live, -22, -58, 0, bars)
-  cruiser(root, live, 25, -96, Math.PI / 2, bars)
-  cruiser(root, live, -27, -84, Math.PI / 2, bars)
+  const patrol = createPatrol(live, bars, loop, -90, bank.maxX)
   for (const [lx, lz, r] of [[-34, -60, 0], [34, -60, Math.PI], [-34, -80, 0], [34, -80, Math.PI], [-34, -100, 0], [34, -100, Math.PI], [-8, -48, 0], [8, -48, Math.PI]]) lamp(root, lx, lz, r)
   // ground zipline tower in front of the building
   const gz = ZIPLINE.ground
@@ -407,7 +771,9 @@ export function buildHub(scene) {
     groundPadAt: new Vector3(gz.x, 0.3, gz.z - 2.2),
     timerSign,
     statsSign,
-    update(dt, t) {
+    // Returns true when a police searchlight has caught the player (see createPatrol).
+    update(dt, t, playerPos, policeAwake = true, watch = false) {
+      const caught = patrol(dt, t, playerPos, policeAwake, watch)
       pulse.forEach((r, i) => {
         const k = 1 + Math.sin(t * 3 + i) * 0.08
         r.scale.set(k, k, k)
@@ -418,6 +784,7 @@ export function buildHub(scene) {
         bars[i].emissiveIntensity = on ? 4 : 0.3
         bars[i + 1].emissiveIntensity = on ? 0.3 : 4
       }
+      return caught
     },
   }
 }

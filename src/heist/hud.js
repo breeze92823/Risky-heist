@@ -13,10 +13,12 @@ const ICON = {
   guide: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><circle cx="12" cy="17.5" r=".6"/></svg>',
   zzz: '<svg viewBox="0 0 24 24"><path d="M4 6h7l-7 8h7M13 3h6l-6 6h6M14 15h4l-4 5h4"/></svg>',
   gift: '<svg viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="12" rx="1.5"/><path d="M3 13h18M12 9v12M12 9C9 9 7 7.5 7.8 5.6 8.7 3.5 11 5 12 9zM12 9c3 0 5-1.5 4.2-3.4C15.3 3.5 13 5 12 9z"/></svg>',
+  ad: '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" stroke-width="1.6" stroke-linejoin="round"/></svg>',
   rebirth: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-13.7 5.6"/><path d="M4 12A8 8 0 0 1 17.7 6.4"/><path d="M17.5 2.5v4h-4M6.5 21.5v-4h4"/></svg>',
 }
 // Big colourful icons for the window title tabs (self-coloured, not stroke-tinted).
 const TAB_ICON = {
+  zip: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#33c9ff" stroke="#14081f" stroke-width="4"/><path d="M8 16 56 34" stroke="#14081f" stroke-width="4" stroke-linecap="round"/><rect x="26" y="20" width="12" height="8" rx="2" fill="#ffcc22" stroke="#14081f" stroke-width="3" transform="rotate(20 32 24)"/><path d="M32 28v12M24 40h16" stroke="#14081f" stroke-width="4" stroke-linecap="round"/><circle cx="32" cy="48" r="5" fill="#fff" stroke="#14081f" stroke-width="3"/></svg>',
   rebirth: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#fff" stroke="#14081f" stroke-width="4"/><path d="M5 32a27 27 0 0 1 54 0z" fill="#ff2f6d" stroke="#14081f" stroke-width="4"/><path d="M44 22a14 14 0 1 0 3 15" fill="none" stroke="#14081f" stroke-width="7" stroke-linecap="round"/><path d="M44 22a14 14 0 1 0 3 15" fill="none" stroke="#7fd8ff" stroke-width="3.5" stroke-linecap="round"/><path d="M38 14l9 7-10 4z" fill="#7fd8ff" stroke="#14081f" stroke-width="2.5" stroke-linejoin="round"/></svg>',
   gift: '<svg viewBox="0 0 64 64"><rect x="6" y="12" width="52" height="46" rx="8" fill="#fff" stroke="#14081f" stroke-width="4"/><path d="M6 20a8 8 0 0 1 8-8h36a8 8 0 0 1 8 8v8H6z" fill="#ff3b5c" stroke="#14081f" stroke-width="4"/><rect x="17" y="4" width="7" height="15" rx="3.5" fill="#cfd4e0" stroke="#14081f" stroke-width="3"/><rect x="40" y="4" width="7" height="15" rx="3.5" fill="#cfd4e0" stroke="#14081f" stroke-width="3"/><text x="32" y="51" text-anchor="middle" font-family="Fredoka, Arial Black" font-weight="700" font-size="23" fill="#14081f">31</text></svg>',
   upgrades: '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#33d6ff" stroke="#14081f" stroke-width="4"/><path d="M32 14 48 32H38v16H26V32H16z" fill="#fff" stroke="#14081f" stroke-width="4" stroke-linejoin="round"/></svg>',
@@ -77,7 +79,9 @@ export function createHud(actions) {
   const right = h('div', 'hud-right')
   const stopBtn = button('boost stop', `<span class="ico">${ICON.zzz}</span><span class="lbl">Stop Police<br>for 60s</span><span class="price"></span>`, actions.onStopPolice)
   const randBtn = button('boost rand', `<span class="ico">${ICON.gift}</span><span class="lbl">Random<br>Treasure!</span><span class="price"></span>`, actions.onRandomTreasure)
-  right.append(stopBtn, randBtn)
+  // Rewarded ad: only shown while Boxity can play one (setAdOffer); the reward is cash, never premium currency.
+  const adBtn = button('boost ad hidden', `<span class="ico">${ICON.ad}</span><span class="lbl">Free Cash<br>Watch Ad</span><span class="price"></span>`, actions.onWatchAd)
+  right.append(stopBtn, randBtn, adBtn)
   root.appendChild(right)
 
   // --- Bottom: money, hotbar, action buttons ----------------------------------------------------
@@ -107,6 +111,18 @@ export function createHud(actions) {
   const busted = h('div', 'hud-busted hidden', '<div class="bars"></div><div class="word">BUSTED!</div><div class="sub">The police took your loot</div>')
   root.appendChild(busted)
 
+  // Boxity's death screen: our own card sits in the middle (the portal puts its ads round it) with a
+  // Respawn button that stays disabled until the portal's countdown reaches 0.
+  const death = h('div', 'hud-death hidden', '<div class="death-card"><div class="death-title">You got caught!</div><div class="death-sub">The police took your loot</div></div>')
+  let deathAction = null
+  const deathBtn = button('death-btn off', 'Respawn', () => deathAction?.())
+  death.querySelector('.death-card').appendChild(deathBtn)
+  root.appendChild(death)
+  function hideDeathPrompt() {
+    death.classList.add('hidden')
+    deathAction = null
+  }
+
   // --- Panel ------------------------------------------------------------------------------------
   const shade = h('div', 'panel-shade hidden')
   const panel = h('div', 'panel')
@@ -135,10 +151,12 @@ export function createHud(actions) {
     panelOpen = true
     onClose = onClosed ?? null
     if (document.pointerLockElement) document.exitPointerLock?.()
+    bloxity.showAdScreen('panel') // Boxity's banners go round the window
   }
   function closePanel() {
     if (!panelOpen) return
     shade.classList.add('hidden')
+    bloxity.hideAdScreen()
     panelOpen = false
     onClose?.()
     onClose = null
@@ -240,6 +258,34 @@ export function createHud(actions) {
       placeBtn.classList.toggle('hidden', !(nearBase && carrying))
       actionsRow.classList.toggle('heist', inHeist)
     },
+    // The rewarded-ad button: `reward` text (e.g. "+$12.5K") while ready, `wait` seconds on cooldown,
+    // hidden when no ad can be shown.
+    setAdOffer(show, reward, wait = 0) {
+      adBtn.classList.toggle('hidden', !show)
+      adBtn.classList.toggle('wait', wait > 0)
+      adBtn.classList.toggle('off', wait > 0)
+      adBtn.querySelector('.price').textContent = wait > 0 ? `${Math.ceil(wait / 60)}m` : reward
+    },
+    // Boxity's death screen: `handle` is its onCountdown / respawn() object; onRespawn runs when the
+    // player clicks Respawn after the countdown (respawn() answered true).
+    deathPrompt(handle, onRespawn) {
+      death.classList.remove('hidden')
+      deathBtn.textContent = 'Respawn'
+      const counting = typeof handle?.onCountdown === 'function'
+      deathBtn.classList.toggle('off', counting)
+      deathAction = () => {
+        if (handle?.respawn?.() === false) return
+        hideDeathPrompt()
+        onRespawn()
+      }
+      if (counting)
+        handle.onCountdown((n) => {
+          const left = Number(n) || 0
+          deathBtn.textContent = left > 0 ? `Respawn in ${left}` : 'Respawn'
+          deathBtn.classList.toggle('off', left > 0)
+        })
+    },
+    hideDeathPrompt,
     setBoosts(stopPrice, randPrice, stopActive) {
       stopBtn.querySelector('.price').textContent = stopActive > 0 ? `${Math.ceil(stopActive)}s` : money(stopPrice)
       stopBtn.classList.toggle('active', stopActive > 0)

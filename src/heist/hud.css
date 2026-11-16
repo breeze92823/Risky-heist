@@ -1160,3 +1160,61 @@
     bottom: calc(var(--safe-b) + var(--pad) + clamp(130px, 38vmin, 200px));
   }
 }
+
+/* --- Rewarded ad button + Boxity death screen prompt -------------------------------------------- */
+.hud-btn.ad .ico {
+  background: linear-gradient(#ffd84a, #ff9a1f);
+}
+.hud-btn.ad .ico svg {
+  fill: #fff;
+  stroke: #14081f;
+}
+.hud-btn.ad.wait {
+  filter: saturate(0.4) brightness(0.85);
+}
+.hud-death {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.hud-death .death-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(8px, 2vmin, 18px);
+  padding: clamp(16px, 4vmin, 40px) clamp(20px, 6vmin, 64px);
+  border-radius: 24px;
+  border: 4px solid #14081f;
+  background: linear-gradient(#3a1230, #1c0a2e);
+  box-shadow: 0 0 0 4px #ff2f6d, 0 18px 60px rgba(0, 0, 0, 0.6);
+  text-align: center;
+  max-width: 90vw;
+}
+.hud-death .death-title {
+  font-size: clamp(26px, 6vmin, 64px);
+  font-weight: 700;
+  color: #ff4f6d;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 0.14em #120a2a;
+}
+.hud-death .death-sub {
+  font-size: clamp(14px, 2.6vmin, 24px);
+  color: #d7d3ff;
+}
+.hud-btn.death-btn {
+  min-height: 48px;
+  min-width: min(260px, 70vw);
+  padding: 10px 28px;
+  border-radius: 16px;
+  border: 4px solid #14081f;
+  background: linear-gradient(#6dff3a, #2fb81a);
+  font-size: clamp(20px, 4vmin, 34px);
+  font-weight: 700;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 0.14em #120a2a;
+}
