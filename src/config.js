@@ -171,7 +171,7 @@ export const CAMERA = {
 // SDK setting keys this game listens for; registering a listener makes the control
 // appear in the portal's settings menu.
 export const SETTINGS = {
-  master_volume: { def: '80', type: 'number', min: 0, max: 100 }, // the sound effects (sfx.js); the game has no music
+  master_volume: { def: '80', type: 'number', min: 0, max: 100 }, // all sound (sfx.js, mix in AUDIO); the game has no music
   graphics_quality: { def: DEFAULT_GRAPHICS, type: 'enum', values: ['Low', 'Medium', 'High', 'Ultra'] },
   camera_sensitivity: { def: '1', type: 'number', min: 0.1, max: 5 },
   show_fps: { def: 'false', type: 'bool' },
@@ -526,6 +526,22 @@ export const POLICE_PATROL = {
   // the ground outside the building who stays in a spot for `catchTime` s is busted (spot turns red).
   // Off while the police are asleep (Stop Police boost).
   spot: { radius: 3.2, dist: 7.5, sweep: 0.75, sweepSpeed: 0.9, catchTime: 0.35 },
+}
+
+// Sound (heist/sfx.js: everything is synthesised with WebAudio, no files). Bus levels are at full
+// master volume (the portal's master_volume scales them all). Police cruisers are 3D sources (engine
+// + roof siren + radio) heard from the camera; the siren comes on with the HUD siren (JAIL.sirenAt)
+// or when a searchlight starts to catch the player.
+export const AUDIO = {
+  master: 0.6,
+  bus: { ui: 0.7, world: 0.85, police: 0.75, ambience: 0.26 },
+  reverb: { seconds: 1.7, outdoor: 0.1, indoor: 0.3 }, // generated room tail, send level by place
+  hover: true, // a soft tick when the mouse moves onto a HUD button (mouse only, never touch)
+  step: { stride: 2.1, sprintStride: 2.7, minSpeed: 1.2 }, // m travelled per footstep
+  siren: { low: 640, high: 1380, wailSeconds: 4.2, yelpSeconds: 0.34, yelpAt: 90 }, // US wail -> yelp near a bust
+  car: { refDistance: 5, rolloff: 1.3, maxDistance: 140, sirenGain: 0.55, engineGain: 0.22 },
+  radio: { every: [8, 18], range: 45 }, // s between police radio calls from the nearest cruiser (m in range)
+  birds: { every: [2.5, 7] }, // s between bird calls in the hub
 }
 
 // Cash-priced boosts on the right of the HUD ("slightly high" cash prices).

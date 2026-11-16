@@ -12,6 +12,7 @@ import * as bloxity from '../bloxity.js'
 import { net, verifyAdReward } from '../net.js'
 import { player, onRespawn, resetPlayer, setDriver, isDriven } from '../player.js'
 import { syncYawToPlayer } from '../camera.js'
+import { inputState } from '../input.js'
 import { applyArmPose, makeTrolley, swingAmount } from './bodyFx.js'
 import { createFx } from './fx.js'
 import { sfx } from './sfx.js'
@@ -238,6 +239,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     }
     resetPlayer({ x: p.x, y: p.y, z: p.z }, facing)
     syncYawToPlayer()
+    sfx.teleport()
     fx.ring(new Vector3(p.x, p.y + 0.05, p.z), '#5fd0ff', 3, 0.5)
   }
 
@@ -497,7 +499,7 @@ export function createGame({ scene, camera, renderer, preset }) {
       fx.flash(r.glow, 0.25)
       hud.banner(`${r.name}!`, t.name, rarityTextColor(r))
     }
-    sfx.steal()
+    sfx.steal(r.tier)
     refreshCarry()
   }
 
@@ -667,6 +669,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     spend(cost)
     heist.stopUntil = performance.now() + BOOSTS.stopPolice.seconds * 1000
     sfx.buy()
+    sfx.policeSleep()
     hud.toast('The police are asleep for 60s!', '#7fd8ff')
     save()
   }
@@ -877,8 +880,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     fx.burst(p, { count: 120, color: ['#ff2f6d', '#ffffff', '#6dff3a', '#ffd21f'], speed: 10, up: 6, size: 0.6, life: 1.4 })
     fx.chunks(p, { count: 24, color: ['#5bdc4a', '#3cae32', '#ffd21f'], size: [0.25, 0.45], flat: 0.05, speed: 6, up: 7, life: 2, floor: player.position.y })
     hud.banner('REBIRTH!', `Cash x${fmt(mult(), 1)} forever`, '#ff4f8a')
-    sfx.buy()
-    sfx.floor()
+    sfx.rebirth()
     save()
   }
 
@@ -950,7 +952,7 @@ export function createGame({ scene, camera, renderer, preset }) {
     const p = new Vector3(player.position.x, player.position.y + 1.6, player.position.z)
     fx.burst(p, { count: 70, color: [color, '#ffffff', '#ffd21f'], speed: 7, up: 5, size: 0.5 })
     fx.ring(new Vector3(p.x, player.position.y + 0.1, p.z), color, 5, 0.7)
-    sfx.buy()
+    sfx.reward()
   }
   let dailyView = null
   function paintDaily() {
@@ -1085,6 +1087,8 @@ export function createGame({ scene, camera, renderer, preset }) {
   let panelT = 0
   let dailyT = 0
   const pos = new Vector3()
+  const audioMe = {}
+  const audioCops = {}
   let lastRoom = -1
   return {
     hud,
@@ -1227,6 +1231,25 @@ export function createGame({ scene, camera, renderer, preset }) {
         hud.toast('Spotted by the police!', '#ff6a6a')
         bust()
       }
+      // sound: listener at the camera, footsteps by surface, ambience by place, the police cruisers
+      const inside = fi >= 0
+      audioMe.x = pos.x
+      audioMe.y = pos.y
+      audioMe.z = pos.z
+      audioMe.grounded = player.grounded
+      audioMe.vy = player.velocity.y
+      audioMe.driven = isDriven() || !!heist.riding
+      audioMe.sprint = !!inputState.sprint
+      audioMe.inside = inside
+      audioMe.zone = zone
+      audioMe.surface = inside ? 'tile' : zone ? 'concrete' : pos.y > 0.8 ? 'wood' : 'grass'
+      audioMe.riverDist = Math.hypot(pos.z > LAYOUT.river.maxZ ? pos.z - LAYOUT.river.maxZ : pos.z < LAYOUT.river.minZ ? LAYOUT.river.minZ - pos.z : 0, Math.max(0, pos.y))
+      audioCops.cars = hub.police.cars
+      audioCops.heat = heist.heat
+      audioCops.awake = policeAwake
+      audioCops.alarm = watch ? hub.police.alarm : 0
+      audioCops.busted = heist.busted
+      sfx.frame(dt, camera, audioMe, audioCops)
       building.update(dt, t, pos)
       for (const b of bases) b.update(dt, t)
       interactions.update(dt, pos)
