@@ -7,7 +7,7 @@
 // pad and adds its Luck to every future roll. Police heat ("Jail Chance") builds while
 // on the heist bank; at 100% you are busted and lose what you carry.
 import { CatmullRomCurve3, Group, Mesh, MeshStandardMaterial, TubeGeometry, Vector3 } from 'three'
-import { BASE, BOOSTS, BUILDING, DAILY, FLOOR_ODDS, FLOORS, HIT_INTERVAL, JAIL, LAYOUT, LUCK_SHIFT, RARITIES, rarityTextColor, REBIRTH, REWARDED_AD, SAVE_KEY, SPAWN, STALLS, TIMED_SPAWNS, TOOLS, TREASURES, UPGRADES, ZIPLINE } from '../config.js'
+import { BASE, BOOSTS, BUILDING, DAILY, FLOOR_ODDS, FLOORS, HIT_INTERVAL, JAIL, LAYOUT, LUCK_SHIFT, RARITIES, rarityTextColor, REBIRTH, REWARDED_AD, SPAWN, STALLS, TIMED_SPAWNS, TOOLS, TREASURES, UPGRADES, ZIPLINE } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { net, verifyAdReward } from '../net.js'
 import { player, onRespawn, resetPlayer, setDriver, isDriven } from '../player.js'
@@ -84,15 +84,9 @@ function parseSave(d) {
   }
   return s
 }
-// The browser's copy: what a signed-out / offline session plays on, and what a new account adopts
-// as its first server save (net.js).
+// Nothing is stored in the browser: every session starts fresh, and a signed-in player's saved
+// progress replaces it when the server answers (hydrate, net.js).
 function loadState() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY)
-    if (raw) return parseSave(JSON.parse(raw))
-  } catch {
-    // corrupt or blocked storage: start fresh
-  }
   return freshState()
 }
 
@@ -148,8 +142,8 @@ export function createGame({ scene, camera, renderer, preset }) {
   }
 
   // --- Saving ------------------------------------------------------------------------------------
-  // The local copy is always written (it is the offline save and a new account's first server save);
-  // net.js listens (onSave) and mirrors it to the server once that has answered.
+  // Nothing is written locally; net.js listens (onSave) and mirrors the state to the server once
+  // that has answered (a new account's first save is the state played so far).
   let saveT = 0
   const saveListeners = new Set()
   const snapshot = () => {
@@ -159,11 +153,6 @@ export function createGame({ scene, camera, renderer, preset }) {
   }
   function save(flush = false) {
     state.lastSeen = Date.now()
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot()))
-    } catch {
-      // storage blocked: the session still plays
-    }
     for (const fn of saveListeners) fn(flush)
   }
   window.addEventListener('beforeunload', () => save(true))

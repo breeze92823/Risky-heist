@@ -560,9 +560,6 @@ export const DAILY = {
     { item: 'barrel' },
   ],
 }
-// The browser's own copy of the save: the offline fallback, and the first server save of a new account.
-export const SAVE_KEY = 'risky-heist-save-v1'
-
 // Colyseus game server (../Risky-heist-backend), one URL per Bloxity Legion channel: `npm run build`
 // (production) reads _MAIN, `npm run dev` and `npm run build:dev` read _DEV (`npm run dev` defaults to
 // the local server). Empty = net.js asks the Bloxity SDK for the channel's endpoint; with no SDK either
